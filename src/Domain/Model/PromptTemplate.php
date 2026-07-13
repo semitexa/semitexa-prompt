@@ -80,13 +80,15 @@ final readonly class PromptTemplate
     }
 
     /**
-     * Partial-include ids referenced directly by this template's system text.
+     * Composed prompt ids referenced by this template's Twig source via the
+     * `{{ include('id') }}` function form (the print form is used rather than
+     * the `{% include %}` tag because block tags trim the trailing newline).
      *
      * @return list<string>
      */
     public function partialIds(): array
     {
-        preg_match_all('/\{\{>\s*([a-zA-Z0-9_.\-]+)\s*\}\}/', $this->system, $matches);
+        preg_match_all('/include\(\s*[\'"]([a-zA-Z0-9_.\-]+)[\'"]/', $this->system, $matches);
 
         return array_values(array_unique($matches[1]));
     }
