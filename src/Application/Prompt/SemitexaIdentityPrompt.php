@@ -16,6 +16,7 @@ use Semitexa\Prompt\Attribute\AsPrompt;
 #[AsPrompt(
     id: 'core.identity',
     channel: 'partial',
+    template: 'core.identity.twig',
     description: "Reusable assistant-identity fragment; compose with {{ include('core.identity') }}.",
 )]
 final class SemitexaIdentityPrompt {}
