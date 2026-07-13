@@ -44,17 +44,28 @@ final class PromptRenderer
 
     /**
      * Render a catalog prompt — either by id with a variables array, or by
-     * passing a self-binding {@see BoundPromptInterface} that carries its own
-     * typed data (its variables() are merged first; any $variables argument
-     * still wins, so a caller can override one field).
+     * passing a self-binding {@see BoundPromptInterface}. A bound prompt is
+     * exposed to its template as a single object under
+     * {@see BoundPromptInterface::CONTEXT_VARIABLE} (`prompt`), so the template
+     * reads its typed data through getters: `{{ prompt.assistantName }}`. Any
+     * explicit $variables still wins (an explicit `prompt` key would replace the
+     * object; other keys sit alongside it).
      *
-     * @param array<string, string> $variables
+     * @param array<string, mixed> $variables
      */
     public function render(string|BoundPromptInterface $prompt, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
         if ($prompt instanceof BoundPromptInterface) {
-            $variables += $prompt->variables();
-            $prompt = $prompt->promptId();
+            $variables += [BoundPromptInterface::CONTEXT_VARIABLE => $prompt];
+
+            // A bound prompt knows its own class, so its template is resolved
+            // directly and deterministically (no discovery) — unless a repository
+            // is given, in which case it wins (override-aware resolution).
+            $template = $repository !== null
+                ? $repository->get($prompt->promptId())
+                : (new PromptRegistry())->buildFromClasses([$prompt::class])[$prompt->promptId()];
+
+            return $this->renderTemplate($template, $variables, $repository);
         }
 
         $repository ??= $this->repository();
@@ -66,7 +77,7 @@ final class PromptRenderer
      * Render an explicit template. `{% include %}` tags resolve against
      * $repository (defaults to the discovered catalog).
      *
-     * @param array<string, string> $variables
+     * @param array<string, mixed> $variables
      */
     public function renderTemplate(PromptTemplate $template, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
@@ -93,7 +104,7 @@ final class PromptRenderer
      * Render a raw source string that is not in the catalog (`{% include %}`
      * tags still resolve against $repository).
      *
-     * @param array<string, string> $variables
+     * @param array<string, mixed> $variables
      */
     public function renderString(string $source, array $variables = [], ?PromptRepositoryInterface $repository = null): string
     {
@@ -103,7 +114,7 @@ final class PromptRenderer
     }
 
     /**
-     * @param array<string, string> $variables
+     * @param array<string, mixed> $variables
      */
     private function renderSource(Environment $twig, string $source, string $promptId, array $variables): string
     {

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Semitexa\Prompt\Domain\Model;
 
+use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+
 /**
  * A catalog entry: the *unrendered* definition of a prompt.
  *
@@ -55,13 +57,16 @@ final readonly class PromptTemplate
     }
 
     /**
-     * The top-level context variables this template (system + few-shot) reads —
-     * the values a caller must bind before rendering.
+     * The bindable data this template (system + few-shot) reads — for a
+     * self-binding prompt, the getter names accessed on the `prompt` object
+     * (`{{ prompt.assistantName }}` yields `assistantName`); for a plain
+     * variables-map template, the top-level `{{ name }}` variables.
      *
      * Computed from the Twig AST, not a regex: it correctly handles filters
-     * (`{{ x|upper }}`), conditionals (`{% if x %}`) and loops (`{% for f in
-     * items %}` yields `items`, not the loop-local `f`). Falls back to an empty
-     * list if a source is unparseable.
+     * (`{{ x|upper }}`), conditionals (`{% if x %}`), loops (`{% for f in
+     * items %}` yields `items`, not the loop-local `f`) and object dot-access
+     * (`{{ prompt.x }}` yields `x`, not `prompt`). Falls back to an empty list
+     * if a source is unparseable.
      *
      * @return list<string>
      */
@@ -96,12 +101,15 @@ final readonly class PromptTemplate
                 /** @var array<string, true> */
                 public array $refs = [];
                 /** @var array<string, true> */
-                public array $locals = ['loop' => true];
+                public array $attrs = [];
+                /** @var array<string, true> The bound-object handle is never itself a bindable value. */
+                public array $locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
 
                 public function reset(): void
                 {
                     $this->refs = [];
-                    $this->locals = ['loop' => true];
+                    $this->attrs = [];
+                    $this->locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
                 }
 
                 public function enterNode(\Twig\Node\Node $node, \Twig\Environment $env): \Twig\Node\Node
@@ -110,6 +118,18 @@ final readonly class PromptTemplate
                         $this->locals[(string) $node->getAttribute('name')] = true;
                     } elseif ($node instanceof \Twig\Node\Expression\Variable\ContextVariable) {
                         $this->refs[(string) $node->getAttribute('name')] = true;
+                    } elseif ($node instanceof \Twig\Node\Expression\GetAttrExpression) {
+                        // A getter accessed on the bound `prompt` object —
+                        // `{{ prompt.assistantName }}` binds `assistantName`.
+                        $base = $node->getNode('node');
+                        $attr = $node->getNode('attribute');
+                        if (
+                            $base instanceof \Twig\Node\Expression\Variable\ContextVariable
+                            && $base->getAttribute('name') === BoundPromptInterface::CONTEXT_VARIABLE
+                            && $attr instanceof \Twig\Node\Expression\ConstantExpression
+                        ) {
+                            $this->attrs[(string) $attr->getAttribute('value')] = true;
+                        }
                     }
 
                     return $node;
@@ -136,10 +156,15 @@ final readonly class PromptTemplate
             return [];
         }
 
-        // Referenced minus locals; drop Twig-internal `_`-prefixed loop variables.
-        $vars = array_diff(array_keys($collector->refs), array_keys($collector->locals));
+        // Getters read on the bound object, plus any plain `{{ name }}` reads
+        // (minus loop/set locals and the `prompt` handle); drop Twig-internal
+        // `_`-prefixed loop variables.
+        $vars = array_merge(
+            array_keys($collector->attrs),
+            array_diff(array_keys($collector->refs), array_keys($collector->locals)),
+        );
 
-        return array_values(array_filter($vars, static fn(string $v): bool => $v === '' || $v[0] !== '_'));
+        return array_values(array_unique(array_filter($vars, static fn(string $v): bool => $v === '' || $v[0] !== '_')));
     }
 
     /**
