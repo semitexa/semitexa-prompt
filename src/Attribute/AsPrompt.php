@@ -29,9 +29,11 @@ final class AsPrompt
         public string $channel = 'default',
         public ?string $description = null,
         /**
-         * The Twig template file (relative to the package's `resources/prompts/`)
-         * that holds this prompt's body. Makes the class → template link explicit.
-         * When null, the registry falls back to the convention `{id}.twig`.
+         * The Twig template file holding this prompt's body, as a path RELATIVE
+         * TO THE OWNING PACKAGE ROOT — e.g. `resources/prompts/core.identity.twig`.
+         * Self-documenting: it names both the folder and the file, so the link is
+         * explicit without knowing any convention. When null, the registry falls
+         * back to `resources/prompts/{id}.twig`.
          */
         public ?string $template = null,
     ) {}

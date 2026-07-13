@@ -126,11 +126,11 @@ final class PromptRegistry implements PromptRepositoryInterface
 
             $instance = $ref->newInstance();
 
-            // Body: the Twig template file (resources/prompts/ in the class's
-            // package — named by AsPrompt::$template, else the {id}.twig
+            // Body: the Twig template file (a package-relative path in
+            // AsPrompt::$template, else the resources/prompts/{id}.twig
             // convention) is canonical; a class implementing the legacy
             // PromptDefinitionInterface::system() is the fallback during migration.
-            $system = $this->loadTemplateFile($ref, $attr->template ?? ($attr->id . '.twig'));
+            $system = $this->loadTemplateFile($ref, $attr->template ?? ('resources/prompts/' . $attr->id . '.twig'));
             if ($system === null) {
                 if (!$instance instanceof PromptDefinitionInterface) {
                     $this->logger?->warning('#[AsPrompt] class has no resources/prompts template and no system()', [
@@ -166,8 +166,9 @@ final class PromptRegistry implements PromptRepositoryInterface
     private static array $packageRoots = [];
 
     /**
-     * The Twig body for a prompt, from `resources/prompts/{id}.twig` in the
-     * package that owns the #[AsPrompt] class. Null when there is no such file.
+     * The Twig body for a prompt, from a package-relative $templateFile path
+     * (e.g. `resources/prompts/core.identity.twig`) inside the package that owns
+     * the #[AsPrompt] class. Null when there is no such file.
      */
     private function loadTemplateFile(ReflectionClass $ref, string $templateFile): ?string
     {
@@ -181,7 +182,7 @@ final class PromptRegistry implements PromptRepositoryInterface
             return null;
         }
 
-        $path = $root . '/resources/prompts/' . $templateFile;
+        $path = $root . '/' . $templateFile;
 
         return is_file($path) ? (string) file_get_contents($path) : null;
     }
