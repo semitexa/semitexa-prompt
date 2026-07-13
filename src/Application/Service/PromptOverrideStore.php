@@ -15,6 +15,7 @@ use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
+use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideHistoryResource;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideResource;
 use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
 
@@ -41,6 +42,8 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     protected TenantContextStoreInterface $tenantContextStore;
 
     private ?DomainRepository $repository = null;
+
+    private ?DomainRepository $historyRepository = null;
 
     /** @var array<string, true> tenants already logged as failed this worker (avoid per-request log spam). */
     private static array $loggedFailures = [];
@@ -118,7 +121,102 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
             $this->scoped()->update($row);
         }
 
+        $this->recordHistory($tenant, $promptId, $system);
         $this->forgetMemo($tenant);
+    }
+
+    /**
+     * The append-only version timeline for a prompt (newest first).
+     *
+     * @return list<array{version: int, system: string, created_at: string}>
+     */
+    public function history(string $promptId): array
+    {
+        $rows = $this->historyRows($promptId);
+        usort($rows, static fn(PromptOverrideHistoryResource $a, PromptOverrideHistoryResource $b): int => $b->version <=> $a->version);
+
+        return array_map(static fn(PromptOverrideHistoryResource $r): array => [
+            'version' => $r->version,
+            'system' => $r->system,
+            'created_at' => $r->created_at->format(\DateTimeInterface::ATOM),
+        ], $rows);
+    }
+
+    /**
+     * Restore a prior version: re-applies its body as a NEW override version
+     * (the history stays append-only). Returns false if the version is unknown.
+     */
+    public function revert(string $promptId, int $version): bool
+    {
+        foreach ($this->historyRows($promptId) as $row) {
+            if ($row->version === $version) {
+                $this->set($promptId, $row->system);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Append a version row for a save. Best-effort: a history-log failure must
+     * not fail the save itself (the current override is already written).
+     */
+    private function recordHistory(string $tenant, string $promptId, string $system): void
+    {
+        try {
+            $next = 1;
+            foreach ($this->historyRows($promptId) as $row) {
+                if ($row->version >= $next) {
+                    $next = $row->version + 1;
+                }
+            }
+
+            $this->historyScoped()->insert(new PromptOverrideHistoryResource(
+                id: Uuid7::generate(),
+                tenant_id: $tenant,
+                prompt_id: $promptId,
+                version: $next,
+                system: $system,
+                created_at: new \DateTimeImmutable(),
+            ));
+        } catch (\Throwable $e) {
+            if (!isset(self::$loggedFailures['history:' . $tenant])) {
+                self::$loggedFailures['history:' . $tenant] = true;
+                FallbackErrorLogger::log('Prompt override history unavailable; the override was saved but not versioned', [
+                    'tenant' => $tenant,
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @return list<PromptOverrideHistoryResource>
+     */
+    private function historyRows(string $promptId): array
+    {
+        /** @var list<PromptOverrideHistoryResource> $rows */
+        $rows = $this->historyScoped()->query()
+            ->where(PromptOverrideHistoryResource::column('prompt_id'), Operator::Equals, $promptId)
+            ->fetchAllAs(PromptOverrideHistoryResource::class, $this->orm()->getMapperRegistry());
+
+        return $rows;
+    }
+
+    private function historyScoped(): DomainRepository
+    {
+        return $this->historyRepository()->forTenant($this->currentTenantId());
+    }
+
+    private function historyRepository(): DomainRepository
+    {
+        return $this->historyRepository ??= $this->orm()->repository(
+            PromptOverrideHistoryResource::class,
+            PromptOverrideHistoryResource::class,
+        );
     }
 
     /** Remove one tenant override (falls back to the catalog again). */
