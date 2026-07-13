@@ -37,6 +37,24 @@ final readonly class PromptTemplate
     ) {}
 
     /**
+     * A copy with the system text replaced, keeping id, channel, description,
+     * few-shot and metadata. Used by the DB override layer to overlay a
+     * tenant-edited body onto the catalog default without losing its other
+     * attributes.
+     */
+    public function withSystem(string $system): self
+    {
+        return new self(
+            id: $this->id,
+            system: $system,
+            channel: $this->channel,
+            description: $this->description,
+            fewShot: $this->fewShot,
+            metadata: $this->metadata,
+        );
+    }
+
+    /**
      * Variable names referenced by this template's system text and few-shot
      * content (partial-include tokens excluded). Derived by scanning tokens, so
      * a caller can validate a values map before rendering.
