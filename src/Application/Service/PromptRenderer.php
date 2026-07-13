@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Prompt\Application\Service;
 
 use Semitexa\Core\Attribute\AsService;
+use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
 use Semitexa\Prompt\Domain\Model\PromptMessage;
@@ -17,16 +18,24 @@ use Semitexa\Prompt\Domain\Model\RenderedPrompt;
  * messages the same way.
  *
  * `#[AsService]` so downstream code (e.g. the semitexa-llm adapter) can inject
- * it. Stateless: partials are resolved against a repository passed per call
- * (defaulting to a lazily-built {@see PromptRegistry}), so there is no
- * per-request mutable state to leak across coroutines.
+ * it. Stateless: partials/by-id lookups resolve against a repository passed per
+ * call, or the default one.
+ *
+ * Default repository: when the container builds this service, the bound
+ * {@see PromptRepositoryInterface} is injected — in a full app that is the
+ * {@see LayeredPromptRepository} (DB override → catalog), so `render($id)` is
+ * override-aware for the current tenant. When instantiated with `new` (CLI,
+ * tests, or a consumer that resolves its own template), the property is left
+ * uninitialised and falls back to a plain {@see PromptRegistry} catalog — no ORM
+ * dependency is touched on that path.
  */
 #[AsService]
 final class PromptRenderer
 {
     private const MAX_PARTIAL_DEPTH = 16;
 
-    private ?PromptRegistry $registry = null;
+    #[InjectAsReadonly]
+    protected PromptRepositoryInterface $repository;
 
     /**
      * Render a catalog prompt by id.
@@ -35,7 +44,7 @@ final class PromptRenderer
      */
     public function render(string $id, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
-        $repository ??= $this->registry();
+        $repository ??= $this->repository();
 
         return $this->renderTemplate($repository->get($id), $variables, $repository);
     }
@@ -48,7 +57,7 @@ final class PromptRenderer
      */
     public function renderTemplate(PromptTemplate $template, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
-        $repository ??= $this->registry();
+        $repository ??= $this->repository();
 
         $used = [];
 
@@ -82,7 +91,7 @@ final class PromptRenderer
      */
     public function renderString(string $template, array $variables = [], ?PromptRepositoryInterface $repository = null): string
     {
-        $repository ??= $this->registry();
+        $repository ??= $this->repository();
         $used = [];
 
         $expanded = $this->expandPartials($template, $repository, ['(inline)']);
@@ -149,8 +158,10 @@ final class PromptRenderer
         return $result;
     }
 
-    private function registry(): PromptRegistry
+    private function repository(): PromptRepositoryInterface
     {
-        return $this->registry ??= new PromptRegistry();
+        // `??` yields null for the uninitialised injected property on the `new`
+        // path, so this lazily falls back to the plain code catalog there.
+        return $this->repository ??= new PromptRegistry();
     }
 }
