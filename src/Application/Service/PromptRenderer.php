@@ -6,6 +6,7 @@ namespace Semitexa\Prompt\Application\Service;
 
 use Semitexa\Core\Attribute\AsService;
 use Semitexa\Core\Attribute\InjectAsReadonly;
+use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
 use Semitexa\Prompt\Domain\Model\PromptMessage;
@@ -42,15 +43,23 @@ final class PromptRenderer
     protected PromptRepositoryInterface $repository;
 
     /**
-     * Render a catalog prompt by id.
+     * Render a catalog prompt — either by id with a variables array, or by
+     * passing a self-binding {@see BoundPromptInterface} that carries its own
+     * typed data (its variables() are merged first; any $variables argument
+     * still wins, so a caller can override one field).
      *
      * @param array<string, string> $variables
      */
-    public function render(string $id, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
+    public function render(string|BoundPromptInterface $prompt, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
+        if ($prompt instanceof BoundPromptInterface) {
+            $variables += $prompt->variables();
+            $prompt = $prompt->promptId();
+        }
+
         $repository ??= $this->repository();
 
-        return $this->renderTemplate($repository->get($id), $variables, $repository);
+        return $this->renderTemplate($repository->get($prompt), $variables, $repository);
     }
 
     /**
