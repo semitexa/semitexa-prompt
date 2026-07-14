@@ -164,7 +164,7 @@ final readonly class PromptTemplate
             array_diff(array_keys($collector->refs), array_keys($collector->locals)),
         );
 
-        return array_values(array_unique(array_filter($vars, static fn(string $v): bool => $v === '' || $v[0] !== '_')));
+        return array_values(array_unique(array_filter($vars, static fn(string $v): bool => $v !== '' && $v[0] !== '_')));
     }
 
     /**

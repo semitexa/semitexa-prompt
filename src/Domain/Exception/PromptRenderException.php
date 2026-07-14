@@ -26,12 +26,12 @@ final class PromptRenderException extends RuntimeException
         ));
     }
 
-    public static function unknownPartial(string $promptId, string $partialId): self
+    public static function unknownPartial(string $promptId, string $detail): self
     {
         return new self(sprintf(
-            'Cannot render prompt "%s": partial include "{{> %s }}" refers to an unknown prompt id.',
+            'Cannot render prompt "%s": an included partial could not be resolved (%s).',
             $promptId,
-            $partialId,
+            $detail,
         ));
     }
 

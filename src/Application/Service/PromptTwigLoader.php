@@ -12,7 +12,7 @@ use Twig\Source;
 /**
  * A Twig loader whose template names are prompt ids: it resolves each id to its
  * Twig source via a {@see PromptRepositoryInterface}. Because the repository can
- * be the override-aware {@see LayeredPromptRepository}, both `{% include 'id' %}`
+ * be the override-aware {@see LayeredPromptRepository}, both `{{ include('id') }}`
  * composition AND per-tenant DB overrides flow through this one seam.
  *
  * The cache key hashes the source, so a changed override compiles once under a

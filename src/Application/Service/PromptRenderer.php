@@ -20,7 +20,7 @@ use Twig\Error\LoaderError;
  * Renders a {@see PromptTemplate} into a {@see RenderedPrompt} with Twig: the
  * system text and each few-shot message are Twig templates, so prompts get
  * variables (`{{ name }}`), conditionals/loops (`{% if %}`, `{% for %}`) and
- * composition (`{% include 'other.id' %}`) natively.
+ * composition (`{{ include('other.id') }}`) natively.
  *
  * Twig config chosen for prompts (NOT HTML): autoescape OFF (a prompt is plain
  * text — escaping would corrupt quotes/`<`/`&` in JSON examples), strict
@@ -32,7 +32,7 @@ use Twig\Error\LoaderError;
  * Default repository: when the container builds this service, the bound
  * {@see PromptRepositoryInterface} is injected — the {@see LayeredPromptRepository}
  * (DB override → catalog) in a full app, so `render($id)` and every
- * `{% include %}` are override-aware for the current tenant. Instantiated with
+ * `{{ include('id') }}` are override-aware for the current tenant. Instantiated with
  * `new` (CLI, tests, own-template consumers) it falls back to a plain
  * {@see PromptRegistry} catalog.
  */
@@ -92,11 +92,17 @@ final class PromptRenderer
             $messages[] = $message->withContent($content);
         }
 
+        // The bound `prompt` object is a render-time handle, not a bound value —
+        // keep it out of RenderedPrompt so toArray() stays serializable (the
+        // object's typed data is reachable through its own getters, not here).
+        $boundValues = $variables;
+        unset($boundValues[BoundPromptInterface::CONTEXT_VARIABLE]);
+
         return new RenderedPrompt(
             promptId: $template->id,
             system: $system,
             messages: $messages,
-            variables: $variables,
+            variables: $boundValues,
         );
     }
 
