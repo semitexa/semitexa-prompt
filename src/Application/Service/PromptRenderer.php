@@ -8,6 +8,7 @@ use Semitexa\Core\Attribute\AsService;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
+use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
 use Semitexa\Prompt\Domain\Model\PromptMessage;
 use Semitexa\Prompt\Domain\Model\PromptTemplate;
@@ -63,7 +64,8 @@ final class PromptRenderer
             // is given, in which case it wins (override-aware resolution).
             $template = $repository !== null
                 ? $repository->get($prompt->promptId())
-                : (new PromptRegistry())->buildFromClasses([$prompt::class])[$prompt->promptId()];
+                : ((new PromptRegistry())->buildFromClasses([$prompt::class])[$prompt->promptId()]
+                    ?? throw PromptNotFoundException::forId($prompt->promptId()));
 
             return $this->renderTemplate($template, $variables, $repository);
         }
@@ -163,9 +165,13 @@ final class PromptRenderer
 
     private function cacheDir(): string
     {
+        // Owner-only (0o700): the compiled .php cache embeds fully-resolved prompt
+        // bodies, including tenant-specific overrides. On a shared temp dir a
+        // group/world-readable cache would leak that text to other local users.
+        // All workers run as the same user, so owner-only keeps the shared cache.
         $dir = sys_get_temp_dir() . '/semitexa-prompt-twig';
         if (!is_dir($dir)) {
-            @mkdir($dir, 0o775, true);
+            @mkdir($dir, 0o700, true);
         }
 
         return is_dir($dir) && is_writable($dir) ? $dir : sys_get_temp_dir();

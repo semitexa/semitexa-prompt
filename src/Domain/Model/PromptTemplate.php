@@ -90,66 +90,58 @@ final readonly class PromptTemplate
      */
     private static function analyzeVariables(string $source): array
     {
-        static $env = null;
-        static $collector = null;
+        // A fresh env + collector PER CALL — no shared mutable static state. In a
+        // coroutine runtime a shared collector would risk interleaved parses
+        // corrupting each other's results; a per-call instance is isolated (and
+        // this runs on the cold list/show/editor path, not hot rendering).
+        //
+        // A NodeVisitor is invoked on EVERY node during parse, so it reliably
+        // separates read references (ContextVariable) from loop/set targets
+        // (AssignContextVariable) — which manual traversal misses.
+        $collector = new class implements \Twig\NodeVisitor\NodeVisitorInterface {
+            /** @var array<string, true> */
+            public array $refs = [];
+            /** @var array<string, true> */
+            public array $attrs = [];
+            /** @var array<string, true> The bound-object handle is never itself a bindable value. */
+            public array $locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
 
-        if ($env === null) {
-            // A NodeVisitor is invoked on EVERY node during parse, so it reliably
-            // separates read references (ContextVariable) from loop/set targets
-            // (AssignContextVariable) — which manual traversal misses.
-            $collector = new class implements \Twig\NodeVisitor\NodeVisitorInterface {
-                /** @var array<string, true> */
-                public array $refs = [];
-                /** @var array<string, true> */
-                public array $attrs = [];
-                /** @var array<string, true> The bound-object handle is never itself a bindable value. */
-                public array $locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
-
-                public function reset(): void
-                {
-                    $this->refs = [];
-                    $this->attrs = [];
-                    $this->locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
-                }
-
-                public function enterNode(\Twig\Node\Node $node, \Twig\Environment $env): \Twig\Node\Node
-                {
-                    if ($node instanceof \Twig\Node\Expression\Variable\AssignContextVariable) {
-                        $this->locals[(string) $node->getAttribute('name')] = true;
-                    } elseif ($node instanceof \Twig\Node\Expression\Variable\ContextVariable) {
-                        $this->refs[(string) $node->getAttribute('name')] = true;
-                    } elseif ($node instanceof \Twig\Node\Expression\GetAttrExpression) {
-                        // A getter accessed on the bound `prompt` object —
-                        // `{{ prompt.assistantName }}` binds `assistantName`.
-                        $base = $node->getNode('node');
-                        $attr = $node->getNode('attribute');
-                        if (
-                            $base instanceof \Twig\Node\Expression\Variable\ContextVariable
-                            && $base->getAttribute('name') === BoundPromptInterface::CONTEXT_VARIABLE
-                            && $attr instanceof \Twig\Node\Expression\ConstantExpression
-                        ) {
-                            $this->attrs[(string) $attr->getAttribute('value')] = true;
-                        }
+            public function enterNode(\Twig\Node\Node $node, \Twig\Environment $env): \Twig\Node\Node
+            {
+                if ($node instanceof \Twig\Node\Expression\Variable\AssignContextVariable) {
+                    $this->locals[(string) $node->getAttribute('name')] = true;
+                } elseif ($node instanceof \Twig\Node\Expression\Variable\ContextVariable) {
+                    $this->refs[(string) $node->getAttribute('name')] = true;
+                } elseif ($node instanceof \Twig\Node\Expression\GetAttrExpression) {
+                    // A getter accessed on the bound `prompt` object —
+                    // `{{ prompt.assistantName }}` binds `assistantName`.
+                    $base = $node->getNode('node');
+                    $attr = $node->getNode('attribute');
+                    if (
+                        $base instanceof \Twig\Node\Expression\Variable\ContextVariable
+                        && $base->getAttribute('name') === BoundPromptInterface::CONTEXT_VARIABLE
+                        && $attr instanceof \Twig\Node\Expression\ConstantExpression
+                    ) {
+                        $this->attrs[(string) $attr->getAttribute('value')] = true;
                     }
-
-                    return $node;
                 }
 
-                public function leaveNode(\Twig\Node\Node $node, \Twig\Environment $env): ?\Twig\Node\Node
-                {
-                    return $node;
-                }
+                return $node;
+            }
 
-                public function getPriority(): int
-                {
-                    return 0;
-                }
-            };
-            $env = new \Twig\Environment(new \Twig\Loader\ArrayLoader());
-            $env->addNodeVisitor($collector);
-        }
+            public function leaveNode(\Twig\Node\Node $node, \Twig\Environment $env): ?\Twig\Node\Node
+            {
+                return $node;
+            }
 
-        $collector->reset();
+            public function getPriority(): int
+            {
+                return 0;
+            }
+        };
+        $env = new \Twig\Environment(new \Twig\Loader\ArrayLoader());
+        $env->addNodeVisitor($collector);
+
         try {
             $env->parse($env->tokenize(new \Twig\Source($source, 'prompt')));
         } catch (\Throwable) {
@@ -158,10 +150,16 @@ final readonly class PromptTemplate
 
         // Getters read on the bound object, plus any plain `{{ name }}` reads
         // (minus loop/set locals and the `prompt` handle); drop Twig-internal
-        // `_`-prefixed loop variables.
+        // `_`-prefixed loop variables. Keys are normalised to strings first —
+        // PHP casts a numeric attribute (e.g. `prompt.0`) to an int array key,
+        // which would otherwise trip the strict `string` filter callback.
+        $toStrings = static fn(array $keyed): array => array_map(
+            static fn(string|int $k): string => (string) $k,
+            array_keys($keyed),
+        );
         $vars = array_merge(
-            array_keys($collector->attrs),
-            array_diff(array_keys($collector->refs), array_keys($collector->locals)),
+            $toStrings($collector->attrs),
+            array_values(array_diff($toStrings($collector->refs), $toStrings($collector->locals))),
         );
 
         return array_values(array_unique(array_filter($vars, static fn(string $v): bool => $v !== '' && $v[0] !== '_')));

@@ -173,7 +173,7 @@ final class PromptOverrideCommand extends Command
 
     private function invalid(SymfonyStyle $io, string $action): int
     {
-        $io->error(sprintf('Unknown action "%s". Use set | list | remove.', $action));
+        $io->error(sprintf('Unknown action "%s". Use set | list | remove | history | revert.', $action));
 
         return Command::INVALID;
     }
