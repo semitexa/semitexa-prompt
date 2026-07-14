@@ -117,26 +117,36 @@ final class PromptRegistry implements PromptRepositoryInterface
                 return null;
             }
 
-            if ($ref->isAbstract() || !$ref->implementsInterface(PromptDefinitionInterface::class)) {
-                // A class marked #[AsPrompt] that can't be used as one is a bug,
-                // not a silent no-op: warn so the misdeclaration is diagnosable.
-                $this->logger?->warning('Ignoring #[AsPrompt] class that is abstract or does not implement PromptDefinitionInterface', [
-                    'class' => $class,
-                ]);
+            if ($ref->isAbstract()) {
                 return null;
             }
 
             /** @var AsPrompt $attr */
             $attr = $attrs[0]->newInstance();
 
-            /** @var PromptDefinitionInterface $instance */
             $instance = $ref->newInstance();
+
+            // Body: the Twig template file (a package-relative path in
+            // AsPrompt::$template, else the resources/prompts/{id}.twig
+            // convention) is canonical; a class implementing the legacy
+            // PromptDefinitionInterface::system() is the fallback during migration.
+            $system = $this->loadTemplateFile($ref, $attr->template ?? ('resources/prompts/' . $attr->id . '.twig'));
+            if ($system === null) {
+                if (!$instance instanceof PromptDefinitionInterface) {
+                    $this->logger?->warning('#[AsPrompt] class has no resources/prompts template and no system()', [
+                        'class' => $class,
+                        'id' => $attr->id,
+                    ]);
+                    return null;
+                }
+                $system = $instance->system();
+            }
 
             $fewShot = $instance instanceof FewShotProviderInterface ? $instance->fewShot() : [];
 
             return new PromptTemplate(
                 id: $attr->id,
-                system: $instance->system(),
+                system: $system,
                 channel: $attr->channel,
                 description: $attr->description ?? '',
                 fewShot: array_values($fewShot),
@@ -149,6 +159,51 @@ final class PromptRegistry implements PromptRepositoryInterface
                 'message' => $e->getMessage(),
             ]);
             return null;
+        }
+    }
+
+    /** @var array<string, string|null> memoized package roots by directory */
+    private static array $packageRoots = [];
+
+    /**
+     * The Twig body for a prompt, from a package-relative $templateFile path
+     * (e.g. `resources/prompts/core.identity.twig`) inside the package that owns
+     * the #[AsPrompt] class. Null when there is no such file.
+     */
+    private function loadTemplateFile(ReflectionClass $ref, string $templateFile): ?string
+    {
+        $file = $ref->getFileName();
+        if ($file === false) {
+            return null;
+        }
+
+        $root = $this->packageRootOf(\dirname($file));
+        if ($root === null) {
+            return null;
+        }
+
+        $path = $root . '/' . $templateFile;
+
+        return is_file($path) ? (string) file_get_contents($path) : null;
+    }
+
+    /** Walk up from $dir to the nearest directory containing composer.json. */
+    private function packageRootOf(string $dir): ?string
+    {
+        if (array_key_exists($dir, self::$packageRoots)) {
+            return self::$packageRoots[$dir];
+        }
+
+        $current = $dir;
+        while (true) {
+            if (is_file($current . '/composer.json')) {
+                return self::$packageRoots[$dir] = $current;
+            }
+            $parent = \dirname($current);
+            if ($parent === $current) {
+                return self::$packageRoots[$dir] = null;
+            }
+            $current = $parent;
         }
     }
 

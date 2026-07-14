@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Semitexa\Prompt\Domain\Model;
 
+use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+
 /**
  * A catalog entry: the *unrendered* definition of a prompt.
  *
@@ -37,38 +39,142 @@ final readonly class PromptTemplate
     ) {}
 
     /**
-     * Variable names referenced by this template's system text and few-shot
-     * content (partial-include tokens excluded). Derived by scanning tokens, so
-     * a caller can validate a values map before rendering.
+     * A copy with the system text replaced, keeping id, channel, description,
+     * few-shot and metadata. Used by the DB override layer to overlay a
+     * tenant-edited body onto the catalog default without losing its other
+     * attributes.
+     */
+    public function withSystem(string $system): self
+    {
+        return new self(
+            id: $this->id,
+            system: $system,
+            channel: $this->channel,
+            description: $this->description,
+            fewShot: $this->fewShot,
+            metadata: $this->metadata,
+        );
+    }
+
+    /**
+     * The bindable data this template (system + few-shot) reads — for a
+     * self-binding prompt, the getter names accessed on the `prompt` object
+     * (`{{ prompt.assistantName }}` yields `assistantName`); for a plain
+     * variables-map template, the top-level `{{ name }}` variables.
+     *
+     * Computed from the Twig AST, not a regex: it correctly handles filters
+     * (`{{ x|upper }}`), conditionals (`{% if x %}`), loops (`{% for f in
+     * items %}` yields `items`, not the loop-local `f`) and object dot-access
+     * (`{{ prompt.x }}` yields `x`, not `prompt`). Falls back to an empty list
+     * if a source is unparseable.
      *
      * @return list<string>
      */
     public function variableNames(): array
     {
-        $sources = [$this->system];
-        foreach ($this->fewShot as $message) {
-            $sources[] = $message->content;
-        }
-
         $names = [];
-        foreach ($sources as $text) {
-            preg_match_all('/\{\{\s*(?!>)([a-zA-Z0-9_.]+)\s*\}\}/', $text, $matches);
-            foreach ($matches[1] as $name) {
+        foreach ([$this->system, ...array_map(static fn(PromptMessage $m): string => $m->content, $this->fewShot)] as $source) {
+            foreach (self::analyzeVariables($source) as $name) {
                 $names[$name] = true;
             }
         }
 
-        return array_keys($names);
+        $out = array_keys($names);
+        sort($out);
+
+        return $out;
     }
 
     /**
-     * Partial-include ids referenced directly by this template's system text.
+     * @return list<string>
+     */
+    private static function analyzeVariables(string $source): array
+    {
+        // A fresh env + collector PER CALL — no shared mutable static state. In a
+        // coroutine runtime a shared collector would risk interleaved parses
+        // corrupting each other's results; a per-call instance is isolated (and
+        // this runs on the cold list/show/editor path, not hot rendering).
+        //
+        // A NodeVisitor is invoked on EVERY node during parse, so it reliably
+        // separates read references (ContextVariable) from loop/set targets
+        // (AssignContextVariable) — which manual traversal misses.
+        $collector = new class implements \Twig\NodeVisitor\NodeVisitorInterface {
+            /** @var array<string, true> */
+            public array $refs = [];
+            /** @var array<string, true> */
+            public array $attrs = [];
+            /** @var array<string, true> The bound-object handle is never itself a bindable value. */
+            public array $locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
+
+            public function enterNode(\Twig\Node\Node $node, \Twig\Environment $env): \Twig\Node\Node
+            {
+                if ($node instanceof \Twig\Node\Expression\Variable\AssignContextVariable) {
+                    $this->locals[(string) $node->getAttribute('name')] = true;
+                } elseif ($node instanceof \Twig\Node\Expression\Variable\ContextVariable) {
+                    $this->refs[(string) $node->getAttribute('name')] = true;
+                } elseif ($node instanceof \Twig\Node\Expression\GetAttrExpression) {
+                    // A getter accessed on the bound `prompt` object —
+                    // `{{ prompt.assistantName }}` binds `assistantName`.
+                    $base = $node->getNode('node');
+                    $attr = $node->getNode('attribute');
+                    if (
+                        $base instanceof \Twig\Node\Expression\Variable\ContextVariable
+                        && $base->getAttribute('name') === BoundPromptInterface::CONTEXT_VARIABLE
+                        && $attr instanceof \Twig\Node\Expression\ConstantExpression
+                    ) {
+                        $this->attrs[(string) $attr->getAttribute('value')] = true;
+                    }
+                }
+
+                return $node;
+            }
+
+            public function leaveNode(\Twig\Node\Node $node, \Twig\Environment $env): ?\Twig\Node\Node
+            {
+                return $node;
+            }
+
+            public function getPriority(): int
+            {
+                return 0;
+            }
+        };
+        $env = new \Twig\Environment(new \Twig\Loader\ArrayLoader());
+        $env->addNodeVisitor($collector);
+
+        try {
+            $env->parse($env->tokenize(new \Twig\Source($source, 'prompt')));
+        } catch (\Throwable) {
+            return [];
+        }
+
+        // Getters read on the bound object, plus any plain `{{ name }}` reads
+        // (minus loop/set locals and the `prompt` handle); drop Twig-internal
+        // `_`-prefixed loop variables. Keys are normalised to strings first —
+        // PHP casts a numeric attribute (e.g. `prompt.0`) to an int array key,
+        // which would otherwise trip the strict `string` filter callback.
+        $toStrings = static fn(array $keyed): array => array_map(
+            static fn(string|int $k): string => (string) $k,
+            array_keys($keyed),
+        );
+        $vars = array_merge(
+            $toStrings($collector->attrs),
+            array_values(array_diff($toStrings($collector->refs), $toStrings($collector->locals))),
+        );
+
+        return array_values(array_unique(array_filter($vars, static fn(string $v): bool => $v !== '' && $v[0] !== '_')));
+    }
+
+    /**
+     * Composed prompt ids referenced by this template's Twig source via the
+     * `{{ include('id') }}` function form (the print form is used rather than
+     * the `{% include %}` tag because block tags trim the trailing newline).
      *
      * @return list<string>
      */
     public function partialIds(): array
     {
-        preg_match_all('/\{\{>\s*([a-zA-Z0-9_.\-]+)\s*\}\}/', $this->system, $matches);
+        preg_match_all('/include\(\s*[\'"]([a-zA-Z0-9_.\-]+)[\'"]/', $this->system, $matches);
 
         return array_values(array_unique($matches[1]));
     }

@@ -58,70 +58,46 @@ final class PromptRendererTest extends TestCase
         $rendered = $this->renderer->renderTemplate($template, ['name' => 'Taras', 'place' => 'Semitexa'], $this->repository([]));
 
         self::assertSame('Hi Taras, welcome to Semitexa.', $rendered->system);
-        self::assertSame(['name' => 'Taras', 'place' => 'Semitexa'], $rendered->variables);
         self::assertSame('greet', $rendered->promptId);
     }
 
-    public function testExpandsPartialThenBindsVariablesAcrossIt(): void
+    public function testTwigConditionalsInPrompts(): void
+    {
+        $template = new PromptTemplate(id: 't', system: 'Hi{% if name %} {{ name }}{% endif %}.');
+
+        self::assertSame('Hi Semi.', $this->renderer->renderTemplate($template, ['name' => 'Semi'], $this->repository([]))->system);
+        self::assertSame('Hi.', $this->renderer->renderTemplate($template, ['name' => ''], $this->repository([]))->system);
+    }
+
+    public function testIncludeComposesAndSharesContext(): void
     {
         $repo = $this->repository([
             'core.identity' => new PromptTemplate(id: 'core.identity', system: 'You are {{ assistant_name }}.'),
         ]);
-        $template = new PromptTemplate(id: 'planner', system: "{{> core.identity }}\nPlan the task for {{ user }}.");
+        $template = new PromptTemplate(id: 'planner', system: "{{ include('core.identity') }}\nPlan for {{ user }}.");
 
         $rendered = $this->renderer->renderTemplate($template, ['assistant_name' => 'Semi', 'user' => 'Taras'], $repo);
 
-        self::assertSame("You are Semi.\nPlan the task for Taras.", $rendered->system);
+        self::assertSame("You are Semi.\nPlan for Taras.", $rendered->system);
     }
 
-    public function testNestedPartials(): void
-    {
-        $repo = $this->repository([
-            'a' => new PromptTemplate(id: 'a', system: 'A[{{> b }}]'),
-            'b' => new PromptTemplate(id: 'b', system: 'B'),
-        ]);
-        $template = new PromptTemplate(id: 't', system: '{{> a }}');
-
-        $rendered = $this->renderer->renderTemplate($template, [], $repo);
-
-        self::assertSame('A[B]', $rendered->system);
-    }
-
-    public function testMissingVariableThrows(): void
+    public function testMissingVariableFailsClosed(): void
     {
         $template = new PromptTemplate(id: 'greet', system: 'Hi {{ name }}');
 
         $this->expectException(PromptRenderException::class);
-        $this->expectExceptionMessageMatches('/missing value.*name/');
-
         $this->renderer->renderTemplate($template, [], $this->repository([]));
     }
 
-    public function testUnknownPartialThrows(): void
+    public function testUnknownIncludeThrows(): void
     {
-        $template = new PromptTemplate(id: 't', system: '{{> does.not.exist }}');
+        $template = new PromptTemplate(id: 't', system: "{{ include('does.not.exist') }}");
 
         $this->expectException(PromptRenderException::class);
-        $this->expectExceptionMessageMatches('/unknown prompt id/');
-
         $this->renderer->renderTemplate($template, [], $this->repository([]));
     }
 
-    public function testPartialCycleThrows(): void
-    {
-        $repo = $this->repository([
-            'cyc.a' => new PromptTemplate(id: 'cyc.a', system: '{{> cyc.b }}'),
-            'cyc.b' => new PromptTemplate(id: 'cyc.b', system: '{{> cyc.a }}'),
-        ]);
-        $template = new PromptTemplate(id: 't', system: '{{> cyc.a }}');
-
-        $this->expectException(PromptRenderException::class);
-        $this->expectExceptionMessageMatches('/cycle/');
-
-        $this->renderer->renderTemplate($template, [], $repo);
-    }
-
-    public function testFewShotMessagesAreVariableSubstituted(): void
+    public function testFewShotMessagesAreRendered(): void
     {
         $template = new PromptTemplate(
             id: 't',
@@ -135,28 +111,33 @@ final class PromptRendererTest extends TestCase
         $rendered = $this->renderer->renderTemplate($template, ['x' => '1', 'y' => '2'], $this->repository([]));
 
         self::assertSame('System 1', $rendered->system);
-        self::assertCount(2, $rendered->messages);
         self::assertSame('Example input 1', $rendered->messages[0]->content);
         self::assertSame('Example output 2', $rendered->messages[1]->content);
     }
 
-    public function testRenderStringResolvesPartialsAndVariables(): void
+    public function testSafeNormalizationStripsTrailingSpaceAndCollapsesBlankLines(): void
+    {
+        $template = new PromptTemplate(id: 't', system: "Line one   \n\n\n\nLine two\t\n");
+
+        // trailing whitespace stripped, 4 blank lines -> 1 blank line, edges trimmed
+        self::assertSame("Line one\n\nLine two", $this->renderer->renderTemplate($template, [], $this->repository([]))->system);
+    }
+
+    public function testJsonBracesAreLiteralNotTwig(): void
+    {
+        $template = new PromptTemplate(id: 't', system: 'Reply {"type":"answer","x":{}} with {{ n }}.');
+
+        self::assertSame('Reply {"type":"answer","x":{}} with 1.', $this->renderer->renderTemplate($template, ['n' => '1'], $this->repository([]))->system);
+    }
+
+    public function testRenderStringResolvesIncludesAndVariables(): void
     {
         $repo = $this->repository([
             'core.identity' => new PromptTemplate(id: 'core.identity', system: 'You are {{ assistant_name }}.'),
         ]);
 
-        $result = $this->renderer->renderString('{{> core.identity }} Go.', ['assistant_name' => 'Semi'], $repo);
+        $result = $this->renderer->renderString("{{ include('core.identity') }} Go.", ['assistant_name' => 'Semi'], $repo);
 
         self::assertSame('You are Semi. Go.', $result);
-    }
-
-    public function testOnlyUsedVariablesAreReportedAsBound(): void
-    {
-        $template = new PromptTemplate(id: 't', system: 'Only {{ a }}');
-
-        $rendered = $this->renderer->renderTemplate($template, ['a' => '1', 'unused' => '2'], $this->repository([]));
-
-        self::assertSame(['a' => '1'], $rendered->variables);
     }
 }

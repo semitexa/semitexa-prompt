@@ -24,11 +24,11 @@ final class PromptTemplateTest extends TestCase
         self::assertSame(['date', 'name', 'topic'], $names);
     }
 
-    public function testPartialTokensAreNotCountedAsVariables(): void
+    public function testIncludeIdsAreExtractedFromTwigSource(): void
     {
         $template = new PromptTemplate(
             id: 't',
-            system: '{{> core.identity }} then {{ tail }}',
+            system: "{{ include('core.identity') }} then {{ tail }}",
         );
 
         self::assertSame(['tail'], $template->variableNames());
