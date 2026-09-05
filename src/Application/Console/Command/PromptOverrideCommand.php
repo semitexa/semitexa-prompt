@@ -148,7 +148,17 @@ final class PromptOverrideCommand extends Command
      */
     private function list(InputInterface $input, OutputInterface $output, SymfonyStyle $io): int
     {
-        $overrides = $this->store->status();
+        try {
+            $overrides = $this->store->status();
+        } catch (\Throwable $e) {
+            // Before this listing grew a drift column it read the memoized
+            // render path, which treats a missing prompt_override table as
+            // "no overrides". That is right for a render and wrong here: an
+            // install that has not run orm:sync would be told it has none.
+            $io->error(sprintf('Could not read the overrides: %s. Has orm:sync run on this install?', $e->getMessage()));
+
+            return Command::FAILURE;
+        }
 
         if ((bool) $input->getOption('json')) {
             $payload = [];

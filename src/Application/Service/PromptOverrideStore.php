@@ -141,7 +141,14 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
      * Deliberately its own query: {@see overridesFor()} is memoized on a render
      * path and returns only the text it needs there.
      *
+     * Also deliberately NOT wrapped in the best-effort catch that path uses. A
+     * render must survive a missing table by falling back to the catalog; a
+     * diagnostic that answered "no overrides" when it simply could not read
+     * them would be worse than useless. The caller reports the failure.
+     *
      * @return array<string, array{system: string, drift: OverrideDrift, updated_at: string}>
+     *
+     * @throws \Throwable when the overrides cannot be read at all
      */
     public function status(): array
     {
