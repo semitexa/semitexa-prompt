@@ -49,7 +49,7 @@ Ship few-shot examples by also implementing `FewShotProviderInterface`.
 $renderer = new PromptRenderer();
 
 $rendered = $renderer->render('os.planner', [
-    'assistant_name' => 'Semi',   // consumed by the {{> core.identity }} partial
+    'assistant_name' => 'Solomiia',   // consumed by the {{> core.identity }} partial
     'user' => 'Taras',
     'date' => '2026-07-13',
 ]);

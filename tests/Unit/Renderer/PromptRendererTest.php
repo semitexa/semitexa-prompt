@@ -65,7 +65,7 @@ final class PromptRendererTest extends TestCase
     {
         $template = new PromptTemplate(id: 't', system: 'Hi{% if name %} {{ name }}{% endif %}.');
 
-        self::assertSame('Hi Semi.', $this->renderer->renderTemplate($template, ['name' => 'Semi'], $this->repository([]))->system);
+        self::assertSame('Hi Solomiia.', $this->renderer->renderTemplate($template, ['name' => 'Solomiia'], $this->repository([]))->system);
         self::assertSame('Hi.', $this->renderer->renderTemplate($template, ['name' => ''], $this->repository([]))->system);
     }
 
@@ -76,9 +76,9 @@ final class PromptRendererTest extends TestCase
         ]);
         $template = new PromptTemplate(id: 'planner', system: "{{ include('core.identity') }}\nPlan for {{ user }}.");
 
-        $rendered = $this->renderer->renderTemplate($template, ['assistant_name' => 'Semi', 'user' => 'Taras'], $repo);
+        $rendered = $this->renderer->renderTemplate($template, ['assistant_name' => 'Solomiia', 'user' => 'Taras'], $repo);
 
-        self::assertSame("You are Semi.\nPlan for Taras.", $rendered->system);
+        self::assertSame("You are Solomiia.\nPlan for Taras.", $rendered->system);
     }
 
     public function testMissingVariableFailsClosed(): void
@@ -136,8 +136,8 @@ final class PromptRendererTest extends TestCase
             'core.identity' => new PromptTemplate(id: 'core.identity', system: 'You are {{ assistant_name }}.'),
         ]);
 
-        $result = $this->renderer->renderString("{{ include('core.identity') }} Go.", ['assistant_name' => 'Semi'], $repo);
+        $result = $this->renderer->renderString("{{ include('core.identity') }} Go.", ['assistant_name' => 'Solomiia'], $repo);
 
-        self::assertSame('You are Semi. Go.', $result);
+        self::assertSame('You are Solomiia. Go.', $result);
     }
 }
