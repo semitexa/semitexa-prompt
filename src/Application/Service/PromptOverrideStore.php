@@ -18,6 +18,8 @@ use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideHistoryResource;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideResource;
 use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
+use Semitexa\Prompt\Domain\Model\PromptOverride;
+use Semitexa\Prompt\Domain\Model\PromptOverrideVersion;
 use Semitexa\Prompt\Domain\Enum\OverrideDrift;
 
 /**
@@ -89,13 +91,13 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         $existing = $this->findRow($promptId);
         $baseHash = $this->shippedHash($promptId);
 
-        $row = new PromptOverrideResource(
-            id: $existing?->id ?? Uuid7::generate(),
-            tenant_id: $tenant,
-            prompt_id: $promptId,
+        $row = new PromptOverride(
+            id: $existing?->getId() ?? Uuid7::generate(),
+            tenantId: $tenant,
+            promptId: $promptId,
             system: $system,
-            base_hash: $baseHash,
-            updated_at: new \DateTimeImmutable(),
+            baseHash: $baseHash,
+            updatedAt: new \DateTimeImmutable(),
         );
 
         if ($existing === null) {
@@ -112,13 +114,13 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
                     // never report success on a lost write.
                     throw $e;
                 }
-                $this->scoped()->update(new PromptOverrideResource(
-                    id: $winner->id,
-                    tenant_id: $tenant,
-                    prompt_id: $promptId,
+                $this->scoped()->update(new PromptOverride(
+                    id: $winner->getId(),
+                    tenantId: $tenant,
+                    promptId: $promptId,
                     system: $system,
-                    base_hash: $baseHash,
-                    updated_at: new \DateTimeImmutable(),
+                    baseHash: $baseHash,
+                    updatedAt: new \DateTimeImmutable(),
                 ));
             }
         } else {
@@ -155,15 +157,15 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         $catalog = new PromptRegistry();
         $out = [];
 
-        /** @var list<PromptOverrideResource> $rows */
+        /** @var list<PromptOverride> $rows */
         $rows = $this->scoped()->query()
-            ->fetchAllAs(PromptOverrideResource::class, $this->orm()->getMapperRegistry());
+            ->fetchAllAs(PromptOverride::class, $this->orm()->getMapperRegistry());
 
         foreach ($rows as $row) {
-            $out[$row->prompt_id] = [
-                'system' => $row->system,
-                'drift' => OverrideDrift::classify($row->base_hash, $catalog->tryGet($row->prompt_id)?->system),
-                'updated_at' => $row->updated_at->format(\DateTimeInterface::ATOM),
+            $out[$row->getPromptId()] = [
+                'system' => $row->getSystem(),
+                'drift' => $row->driftAgainst($catalog->tryGet($row->getPromptId())?->system),
+                'updated_at' => ($row->getUpdatedAt() ?? new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
             ];
         }
 
@@ -195,12 +197,12 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     public function history(string $promptId): array
     {
         $rows = $this->historyRows($promptId);
-        usort($rows, static fn(PromptOverrideHistoryResource $a, PromptOverrideHistoryResource $b): int => $b->version <=> $a->version);
+        usort($rows, static fn(PromptOverrideVersion $a, PromptOverrideVersion $b): int => $b->getVersion() <=> $a->getVersion());
 
-        return array_map(static fn(PromptOverrideHistoryResource $r): array => [
-            'version' => $r->version,
-            'system' => $r->system,
-            'created_at' => $r->created_at->format(\DateTimeInterface::ATOM),
+        return array_map(static fn(PromptOverrideVersion $r): array => [
+            'version' => $r->getVersion(),
+            'system' => $r->getSystem(),
+            'created_at' => ($r->getCreatedAt() ?? new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
         ], $rows);
     }
 
@@ -211,8 +213,8 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     public function revert(string $promptId, int $version): bool
     {
         foreach ($this->historyRows($promptId) as $row) {
-            if ($row->version === $version) {
-                $this->set($promptId, $row->system);
+            if ($row->getVersion() === $version) {
+                $this->set($promptId, $row->getSystem());
 
                 return true;
             }
@@ -230,18 +232,18 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         try {
             $next = 1;
             foreach ($this->historyRows($promptId) as $row) {
-                if ($row->version >= $next) {
-                    $next = $row->version + 1;
+                if ($row->getVersion() >= $next) {
+                    $next = $row->getVersion() + 1;
                 }
             }
 
-            $this->historyScoped()->insert(new PromptOverrideHistoryResource(
+            $this->historyScoped()->insert(new PromptOverrideVersion(
                 id: Uuid7::generate(),
-                tenant_id: $tenant,
-                prompt_id: $promptId,
+                tenantId: $tenant,
+                promptId: $promptId,
                 version: $next,
                 system: $system,
-                created_at: new \DateTimeImmutable(),
+                createdAt: new \DateTimeImmutable(),
             ));
         } catch (\Throwable $e) {
             if (!isset(self::$loggedFailures['history:' . $tenant])) {
@@ -256,14 +258,14 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     }
 
     /**
-     * @return list<PromptOverrideHistoryResource>
+     * @return list<PromptOverrideVersion>
      */
     private function historyRows(string $promptId): array
     {
-        /** @var list<PromptOverrideHistoryResource> $rows */
+        /** @var list<PromptOverrideVersion> $rows */
         $rows = $this->historyScoped()->query()
             ->where(PromptOverrideHistoryResource::column('prompt_id'), Operator::Equals, $promptId)
-            ->fetchAllAs(PromptOverrideHistoryResource::class, $this->orm()->getMapperRegistry());
+            ->fetchAllAs(PromptOverrideVersion::class, $this->orm()->getMapperRegistry());
 
         return $rows;
     }
@@ -277,7 +279,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     {
         return $this->historyRepository ??= $this->orm()->repository(
             PromptOverrideHistoryResource::class,
-            PromptOverrideHistoryResource::class,
+            PromptOverrideVersion::class,
         );
     }
 
@@ -291,12 +293,12 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         }
     }
 
-    private function findRow(string $promptId): ?PromptOverrideResource
+    private function findRow(string $promptId): ?PromptOverride
     {
-        /** @var PromptOverrideResource|null $row */
+        /** @var PromptOverride|null $row */
         $row = $this->scoped()->query()
             ->where(PromptOverrideResource::column('prompt_id'), Operator::Equals, $promptId)
-            ->fetchOneAs(PromptOverrideResource::class, $this->orm()->getMapperRegistry());
+            ->fetchOneAs(PromptOverride::class, $this->orm()->getMapperRegistry());
 
         return $row;
     }
@@ -319,11 +321,11 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
 
         $map = [];
         try {
-            /** @var list<PromptOverrideResource> $rows */
+            /** @var list<PromptOverride> $rows */
             $rows = $this->scoped()->query()
-                ->fetchAllAs(PromptOverrideResource::class, $this->orm()->getMapperRegistry());
+                ->fetchAllAs(PromptOverride::class, $this->orm()->getMapperRegistry());
             foreach ($rows as $row) {
-                $map[$row->prompt_id] = $row->system;
+                $map[$row->getPromptId()] = $row->getSystem();
             }
         } catch (\Throwable $e) {
             // No table yet / DB hiccup: overrides are a best-effort enhancement
@@ -371,7 +373,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     {
         return $this->repository ??= $this->orm()->repository(
             PromptOverrideResource::class,
-            PromptOverrideResource::class,
+            PromptOverride::class,
         );
     }
 
