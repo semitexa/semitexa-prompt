@@ -18,6 +18,7 @@ use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideHistoryResource;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideResource;
 use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
+use Semitexa\Prompt\Domain\Enum\OverrideDrift;
 
 /**
  * DB-backed per-tenant prompt overrides — the live-editable layer over the
@@ -86,12 +87,14 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     {
         $tenant = $this->currentTenantId();
         $existing = $this->findRow($promptId);
+        $baseHash = $this->shippedHash($promptId);
 
         $row = new PromptOverrideResource(
             id: $existing?->id ?? Uuid7::generate(),
             tenant_id: $tenant,
             prompt_id: $promptId,
             system: $system,
+            base_hash: $baseHash,
             updated_at: new \DateTimeImmutable(),
         );
 
@@ -114,6 +117,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
                     tenant_id: $tenant,
                     prompt_id: $promptId,
                     system: $system,
+                    base_hash: $baseHash,
                     updated_at: new \DateTimeImmutable(),
                 ));
             }
@@ -123,6 +127,57 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
 
         $this->recordHistory($tenant, $promptId, $system);
         $this->forgetMemo($tenant);
+    }
+
+    /**
+     * Every override of the current tenant with a verdict on whether it has
+     * gone stale — the admin/CLI read path, never the render path.
+     *
+     * An override wins over the catalog forever, so a tenant who customised a
+     * prompt keeps their copy even after the framework rewrites the shipped
+     * one. That is the point of an override; the problem is that nothing used
+     * to say it had happened. {@see OverrideDrift} is the verdict.
+     *
+     * Deliberately its own query: {@see overridesFor()} is memoized on a render
+     * path and returns only the text it needs there.
+     *
+     * @return array<string, array{system: string, drift: OverrideDrift, updated_at: string}>
+     */
+    public function status(): array
+    {
+        $catalog = new PromptRegistry();
+        $out = [];
+
+        /** @var list<PromptOverrideResource> $rows */
+        $rows = $this->scoped()->query()
+            ->fetchAllAs(PromptOverrideResource::class, $this->orm()->getMapperRegistry());
+
+        foreach ($rows as $row) {
+            $out[$row->prompt_id] = [
+                'system' => $row->system,
+                'drift' => OverrideDrift::classify($row->base_hash, $catalog->tryGet($row->prompt_id)?->system),
+                'updated_at' => $row->updated_at->format(\DateTimeInterface::ATOM),
+            ];
+        }
+
+        ksort($out);
+
+        return $out;
+    }
+
+    /**
+     * The fingerprint of what the CODE catalog ships for this prompt right now.
+     *
+     * Reads {@see PromptRegistry} directly rather than the container's
+     * {@see \Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface}: the
+     * bound implementation is the layered one, which would hand back the
+     * override being written and stamp the row with a hash of itself.
+     */
+    private function shippedHash(string $promptId): ?string
+    {
+        $shipped = (new PromptRegistry())->tryGet($promptId);
+
+        return $shipped === null ? null : OverrideDrift::fingerprint($shipped->system);
     }
 
     /**

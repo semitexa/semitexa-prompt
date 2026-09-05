@@ -7,6 +7,7 @@ namespace Semitexa\Prompt\Application\Console\Command;
 use Semitexa\Core\Attribute\AsCommand;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Prompt\Application\Service\PromptOverrideStore;
+use Semitexa\Prompt\Domain\Enum\OverrideDrift;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -141,12 +142,20 @@ final class PromptOverrideCommand extends Command
         return Command::SUCCESS;
     }
 
+    /**
+     * Lists the overrides with the one fact the row alone never told anyone:
+     * whether the framework has rewritten the prompt underneath it.
+     */
     private function list(InputInterface $input, OutputInterface $output, SymfonyStyle $io): int
     {
-        $overrides = $this->store->all();
+        $overrides = $this->store->status();
 
         if ((bool) $input->getOption('json')) {
-            $output->writeln((string) json_encode(['overrides' => $overrides], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $payload = [];
+            foreach ($overrides as $id => $entry) {
+                $payload[$id] = ['drift' => $entry['drift']->value] + $entry;
+            }
+            $output->writeln((string) json_encode(['overrides' => $payload], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
             return Command::SUCCESS;
         }
@@ -159,14 +168,25 @@ final class PromptOverrideCommand extends Command
         }
 
         $rows = [];
-        foreach ($overrides as $id => $system) {
-            $preview = strtok($system, "\n") ?: '';
-            if (mb_strlen($preview) > 80) {
-                $preview = mb_substr($preview, 0, 80) . '…';
+        $stale = 0;
+        foreach ($overrides as $id => $entry) {
+            $preview = strtok($entry['system'], "\n") ?: '';
+            if (mb_strlen($preview) > 60) {
+                $preview = mb_substr($preview, 0, 60) . '…';
             }
-            $rows[] = [$id, $preview];
+            if ($entry['drift'] === OverrideDrift::ShippedChanged) {
+                ++$stale;
+            }
+            $rows[] = [$id, $entry['drift']->label(), $preview];
         }
-        $io->table(['Prompt id', 'System (first line)'], $rows);
+        $io->table(['Prompt id', 'Drift', 'System (first line)'], $rows);
+
+        if ($stale > 0) {
+            $io->warning(sprintf(
+                '%d override(s) were written against a shipped prompt that has changed since. Compare with `prompt:show --id=<id>` and re-apply what you want to keep, or `prompt:override remove --id=<id>` to follow the shipped text again.',
+                $stale,
+            ));
+        }
 
         return Command::SUCCESS;
     }
