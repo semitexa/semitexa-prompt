@@ -54,8 +54,11 @@ final readonly class PromptOverrideResource
          * tell an operator which of their overrides have gone stale.
          *
          * Null for rows written before this was tracked, and for an override of
-         * a prompt the catalog does not ship at all — both are "unknown", not
-         * "unchanged", and are reported as such.
+         * a prompt the catalog does not ship at all. Neither is "unchanged",
+         * and the two are reported apart: a legacy row is untracked ("unknown
+         * (pre-tracking)"), while a prompt missing from the catalog is "not
+         * shipped" — {@see \Semitexa\Prompt\Domain\Enum\OverrideDrift} decides
+         * that one on the absent catalog text, before this hash is consulted.
          */
         #[Column(type: MySqlType::Varchar, length: 64, nullable: true)]
         public ?string $base_hash,
