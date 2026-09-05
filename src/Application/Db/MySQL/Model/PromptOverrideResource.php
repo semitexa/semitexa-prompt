@@ -44,6 +44,25 @@ final readonly class PromptOverrideResource
         #[Column(type: MySqlType::LongText)]
         public string $system,
 
+        /**
+         * Fingerprint of the SHIPPED text this override was written against.
+         *
+         * An override is a frozen copy: once written it stops receiving the
+         * improvements the framework makes to that prompt, and nothing else in
+         * the row would ever say so. Comparing this to the catalog's current
+         * hash is what lets {@see \Semitexa\Prompt\Application\Service\PromptOverrideStore::status()}
+         * tell an operator which of their overrides have gone stale.
+         *
+         * Null for rows written before this was tracked, and for an override of
+         * a prompt the catalog does not ship at all. Neither is "unchanged",
+         * and the two are reported apart: a legacy row is untracked ("unknown
+         * (pre-tracking)"), while a prompt missing from the catalog is "not
+         * shipped" — {@see \Semitexa\Prompt\Domain\Enum\OverrideDrift} decides
+         * that one on the absent catalog text, before this hash is consulted.
+         */
+        #[Column(type: MySqlType::Varchar, length: 64, nullable: true)]
+        public ?string $base_hash,
+
         #[Column(type: MySqlType::Datetime)]
         public \DateTimeImmutable $updated_at,
     ) {}
