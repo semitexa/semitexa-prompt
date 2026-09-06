@@ -15,6 +15,7 @@ use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Orm\Application\Service\OrmBackedStore;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
+use Semitexa\Orm\Query\SystemScopeToken;
 use Semitexa\Orm\Repository\DomainRepository;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideHistoryResource;
 use Semitexa\Prompt\Application\Db\MySQL\Model\PromptOverrideResource;
@@ -162,6 +163,44 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         }
 
         ksort($out);
+
+        return $out;
+    }
+
+    /**
+     * Every override on this INSTALL, whatever tenant wrote it, with the same
+     * verdict {@see status()} gives for the current one.
+     *
+     * The tenant dimension is the whole reason this exists separately. `status()`
+     * is scoped, and the update runs on the CLI under the 'default' tenant — so
+     * a report built on it would tell a multi-tenant operator that nothing has
+     * drifted while every other tenant sat on a frozen copy. Reading past the
+     * scope needs a SystemScopeToken, which is exactly the deliberate act the
+     * token is there to require.
+     *
+     * @return list<array{tenant: string, prompt: string, drift: OverrideDrift}>
+     *
+     * @throws \Throwable when the overrides cannot be read at all
+     */
+    public function statusAcrossTenants(): array
+    {
+        $catalog = new PromptRegistry();
+
+        /** @var list<PromptOverride> $rows */
+        $rows = $this->repository()->query()
+            ->withoutTenantScope(SystemScopeToken::issue())
+            ->fetchAllAs(PromptOverride::class, $this->mapperRegistry());
+
+        $out = [];
+        foreach ($rows as $row) {
+            $out[] = [
+                'tenant' => $row->getTenantId() ?? 'default',
+                'prompt' => $row->getPromptId(),
+                'drift' => $row->driftAgainst($catalog->tryGet($row->getPromptId())?->system),
+            ];
+        }
+
+        usort($out, static fn (array $a, array $b): int => [$a['tenant'], $a['prompt']] <=> [$b['tenant'], $b['prompt']]);
 
         return $out;
     }
