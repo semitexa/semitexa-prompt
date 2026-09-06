@@ -12,6 +12,7 @@ use Semitexa\Core\Support\CoroutineLocal;
 use Semitexa\Core\Tenant\TenantContextAccess;
 use Semitexa\Core\Tenant\TenantContextStoreInterface;
 use Semitexa\Orm\Application\Service\Uuid7;
+use Semitexa\Orm\Application\Service\OrmBackedStore;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Repository\DomainRepository;
@@ -36,6 +37,8 @@ use Semitexa\Prompt\Domain\Enum\OverrideDrift;
 #[SatisfiesServiceContract(of: PromptOverrideProviderInterface::class)]
 final class PromptOverrideStore implements PromptOverrideProviderInterface
 {
+    use OrmBackedStore;
+
     private const MEMO_KEY = 'prompt.override.memo';
 
     #[InjectAsReadonly]
@@ -44,21 +47,10 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     #[InjectAsReadonly]
     protected TenantContextStoreInterface $tenantContextStore;
 
-    private ?DomainRepository $repository = null;
-
     private ?DomainRepository $historyRepository = null;
 
     /** @var array<string, true> tenants already logged as failed this worker (avoid per-request log spam). */
     private static array $loggedFailures = [];
-
-    /** Test seam — production path uses property injection. */
-    public function withOrmManager(OrmManager $orm): self
-    {
-        $this->orm = $orm;
-        $this->repository = null;
-
-        return $this;
-    }
 
     /** Test seam — production path uses property injection. */
     public function withTenantContextStore(TenantContextStoreInterface $store): self
@@ -159,7 +151,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
 
         /** @var list<PromptOverride> $rows */
         $rows = $this->scoped()->query()
-            ->fetchAllAs(PromptOverride::class, $this->orm()->getMapperRegistry());
+            ->fetchAllAs(PromptOverride::class, $this->mapperRegistry());
 
         foreach ($rows as $row) {
             $out[$row->getPromptId()] = [
@@ -265,7 +257,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         /** @var list<PromptOverrideVersion> $rows */
         $rows = $this->historyScoped()->query()
             ->where(PromptOverrideHistoryResource::column('prompt_id'), Operator::Equals, $promptId)
-            ->fetchAllAs(PromptOverrideVersion::class, $this->orm()->getMapperRegistry());
+            ->fetchAllAs(PromptOverrideVersion::class, $this->mapperRegistry());
 
         return $rows;
     }
@@ -298,7 +290,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         /** @var PromptOverride|null $row */
         $row = $this->scoped()->query()
             ->where(PromptOverrideResource::column('prompt_id'), Operator::Equals, $promptId)
-            ->fetchOneAs(PromptOverride::class, $this->orm()->getMapperRegistry());
+            ->fetchOneAs(PromptOverride::class, $this->mapperRegistry());
 
         return $row;
     }
@@ -323,7 +315,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         try {
             /** @var list<PromptOverride> $rows */
             $rows = $this->scoped()->query()
-                ->fetchAllAs(PromptOverride::class, $this->orm()->getMapperRegistry());
+                ->fetchAllAs(PromptOverride::class, $this->mapperRegistry());
             foreach ($rows as $row) {
                 $map[$row->getPromptId()] = $row->getSystem();
             }
@@ -371,18 +363,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
 
     private function repository(): DomainRepository
     {
-        return $this->repository ??= $this->orm()->repository(
-            PromptOverrideResource::class,
-            PromptOverride::class,
-        );
+        return $this->domainRepository(PromptOverrideResource::class, PromptOverride::class);
     }
 
-    private function orm(): OrmManager
-    {
-        if (!isset($this->orm)) {
-            $this->orm = new OrmManager();
-        }
-
-        return $this->orm;
-    }
 }
