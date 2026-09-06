@@ -1,6 +1,6 @@
 {
     "name": "semitexa/prompt",
-    "description": "Prompt catalog for the Semitexa Framework — discoverable prompt templates, variable binding, partial composition and render/inspect tooling (an ORM for prompts)",
+    "description": "Prompt catalog for the Semitexa Framework \u2014 discoverable prompt templates, variable binding, partial composition and render/inspect tooling (an ORM for prompts)",
     "type": "semitexa-module",
     "license": "MIT",
     "authors": [
@@ -13,7 +13,8 @@
         "php": "^8.4",
         "semitexa/core": "*",
         "semitexa/orm": "*",
-        "twig/twig": "^3.10"
+        "twig/twig": "^3.10",
+        "semitexa/update": "*"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0"
