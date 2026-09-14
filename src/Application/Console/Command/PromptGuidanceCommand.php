@@ -164,7 +164,13 @@ final class PromptGuidanceCommand extends Command
             return Command::FAILURE;
         }
 
-        if (!$this->store->setEnabled($row, $enabled)) {
+        try {
+            $flipped = $this->store->setEnabled($row, $enabled);
+        } catch (\Throwable $e) {
+            return self::unreadable($io, $e);
+        }
+
+        if (!$flipped) {
             $io->error(sprintf('No guidance row "%s" for this tenant.', $row));
 
             return Command::FAILURE;
@@ -184,7 +190,13 @@ final class PromptGuidanceCommand extends Command
             return Command::FAILURE;
         }
 
-        if (!$this->store->remove($row)) {
+        try {
+            $removed = $this->store->remove($row);
+        } catch (\Throwable $e) {
+            return self::unreadable($io, $e);
+        }
+
+        if (!$removed) {
             $io->error(sprintf('No guidance row "%s" for this tenant.', $row));
 
             return Command::FAILURE;

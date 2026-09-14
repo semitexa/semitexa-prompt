@@ -111,7 +111,7 @@ final class PromptOverrideCommand extends Command
             return Command::INVALID;
         }
 
-        if ($this->store->revert($id, (int) $version, self::author($input))) {
+        if ($this->store->revert($id, (int) $version, self::author($input), self::reason($input))) {
             $io->success(sprintf('Restored "%s" to version %s (as a new version).', $id, $version));
 
             return Command::SUCCESS;

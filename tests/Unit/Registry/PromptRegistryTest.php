@@ -86,6 +86,30 @@ final class PromptRegistryTest extends TestCase
         self::assertCount(1, $registry->all(), 'a bodyless prompt is not listed as if it worked');
     }
 
+    public function testABodylessClassDoesNotPoisonAnIdAnotherClassClaimsValidly(): void
+    {
+        // Reported on the PR: the quarantine recorded the id, and tryGet() then
+        // threw over a template sitting right there in the catalog. A claimed id
+        // is a claimed id whether or not the claimant has a body, so this is the
+        // duplicate-id case and is reported as one, naming both classes.
+        $registry = new PromptRegistry();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/Duplicate prompt id "fix\.notadef"/');
+
+        $registry->buildFromClasses([FixtureNotADefinition::class, FixtureValidNotADefTwin::class]);
+    }
+
+    public function testTheSameCollisionIsCaughtInEitherDeclarationOrder(): void
+    {
+        $registry = new PromptRegistry();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/Duplicate prompt id "fix\.notadef"/');
+
+        $registry->buildFromClasses([FixtureValidNotADefTwin::class, FixtureNotADefinition::class]);
+    }
+
     public function testDuplicateIdIsAHardError(): void
     {
         $registry = new PromptRegistry();
@@ -135,5 +159,15 @@ final class FixtureNotADefinition
     public function whatever(): string
     {
         return 'not a prompt';
+    }
+}
+
+/** A healthy class claiming the same id as the bodyless one above. */
+#[AsPrompt(id: 'fix.notadef')]
+final class FixtureValidNotADefTwin implements PromptDefinitionInterface
+{
+    public function system(): string
+    {
+        return 'I have a body.';
     }
 }

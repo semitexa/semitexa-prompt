@@ -11,9 +11,17 @@ use Semitexa\Prompt\Domain\Model\PromptGuidance;
  *
  * Read by {@see \Semitexa\Prompt\Application\Service\PromptRenderer}, which binds
  * the joined text as the `guidance` variable. A template that does not print
- * `{{ guidance }}` never shows it — the position in the file IS the permission,
- * so a prompt author decides whether guidance may reach tone while rules stay
- * out of reach. That is the whole access model; there is no second one.
+ * `{{ guidance }}` never shows it, and one that prints it decides where operator
+ * text lands.
+ *
+ * Placement is NOT an enforcement boundary, and must not be sold as one. The
+ * whole system prompt reaches the same model, so guidance reading "ignore the
+ * rules below" is still text the model interprets; putting it above the rules
+ * makes it no less persuasive. Binding as a value stops Twig EVALUATING an
+ * operator's `{{ ... }}`; it does not stop a model OBEYING their sentence.
+ * Guidance authors are trusted at the level of someone who could edit the
+ * prompt. A rule that must hold whatever the prompt says belongs outside the
+ * prompt — a guard on the model's output.
  *
  * Implementations resolve the CURRENT tenant themselves (coroutine-local), so
  * the caller passes only the prompt id and, optionally, a narrower scope.

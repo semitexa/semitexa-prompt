@@ -108,6 +108,7 @@ final class PromptRegistry implements PromptRepositoryInterface
         $catalog = [];
         $owners = [];
         $this->broken = [];
+        $brokenOwners = [];
         foreach ($classes as $class) {
             try {
                 $template = $this->buildTemplate($class);
@@ -120,25 +121,41 @@ final class PromptRegistry implements PromptRepositoryInterface
                 // class must not be able to do that. The failure stays loud where
                 // it is somebody's problem: asking for THIS id by name throws,
                 // and the tooling reports it (see brokenIds()).
+                if (isset($owners[$e->promptId])) {
+                    throw self::duplicate($e->promptId, $owners[$e->promptId], $class);
+                }
                 $this->broken[$e->promptId] = $e;
+                $brokenOwners[$e->promptId] = $class;
                 continue;
             }
             if ($template === null) {
                 continue;
             }
+            // Checked against BOTH maps. A quarantined id is still a CLAIMED id:
+            // without this, a bodyless class poisoned the id for a healthy class
+            // that also declared it, and tryGet() threw over a template sitting
+            // right there in the catalog.
             if (isset($catalog[$template->id])) {
-                throw new \RuntimeException(sprintf(
-                    'Duplicate prompt id "%s" declared by %s and %s.',
-                    $template->id,
-                    $owners[$template->id],
-                    $class,
-                ));
+                throw self::duplicate($template->id, $owners[$template->id], $class);
+            }
+            if (isset($brokenOwners[$template->id])) {
+                throw self::duplicate($template->id, $brokenOwners[$template->id], $class);
             }
             $catalog[$template->id] = $template;
             $owners[$template->id] = $class;
         }
 
         return $this->catalog = $catalog;
+    }
+
+    private static function duplicate(string $id, string $first, string $second): \RuntimeException
+    {
+        return new \RuntimeException(sprintf(
+            'Duplicate prompt id "%s" declared by %s and %s.',
+            $id,
+            $first,
+            $second,
+        ));
     }
 
     /**

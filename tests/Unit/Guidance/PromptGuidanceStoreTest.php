@@ -49,7 +49,8 @@ final class PromptGuidanceStoreTest extends TestCase
                 author TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 enabled INTEGER NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                UNIQUE (tenant_id, prompt_id, position)
             )',
         );
     }
@@ -206,6 +207,37 @@ final class PromptGuidanceStoreTest extends TestCase
 
         self::assertTrue($store->remove($row->getId()));
         self::assertSame([], $store->listAll());
+    }
+
+    #[Test]
+    public function a_taken_position_is_retried_rather_than_duplicated(): void
+    {
+        // Reported on the PR: the position is read-then-written, so two
+        // concurrent adds could claim the same slot and the render order then
+        // fell back to a UUID comparison that is not insertion order. The unique
+        // index turns that into a failed insert this store retries.
+        $store = $this->store();
+        $store->add('social.topic', 'First.', 'someone');
+
+        // Plant a row directly at the slot the next add() will compute, the way
+        // a concurrent writer would have.
+        $this->orm->getAdapter()->execute(
+            "INSERT INTO prompt_guidance (id, tenant_id, prompt_id, scope, position, body, author, reason, enabled, created_at)
+             VALUES ('planted', 'default', 'social.topic', NULL, 2, 'Planted.', 'someone else', '', 1, '2026-09-14 00:00:00')",
+        );
+
+        $store->add('social.topic', 'Third.', 'someone');
+
+        $positions = array_map(
+            static fn (PromptGuidance $g): int => $g->getPosition(),
+            $store->guidanceFor('social.topic'),
+        );
+
+        self::assertSame([1, 2, 3], $positions, 'every row holds a distinct slot');
+        self::assertSame(
+            ['First.', 'Planted.', 'Third.'],
+            array_map(static fn (PromptGuidance $g): string => $g->getBody(), $store->guidanceFor('social.topic')),
+        );
     }
 
     #[Test]

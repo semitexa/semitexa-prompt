@@ -24,6 +24,12 @@ use Semitexa\Orm\Metadata\HasRelationReferences;
  */
 #[FromTable(name: 'prompt_guidance')]
 #[Index(columns: ['tenant_id', 'prompt_id'], name: 'idx_prompt_guidance_lookup')]
+// Unique, like prompt_override_history's (tenant, prompt, version): the next
+// position is computed from the rows that exist, so two concurrent adds can
+// reach for the same slot. The index turns that race into a failed insert the
+// caller retries, instead of two rows whose render order is decided by a UUID
+// comparison that is not insertion order.
+#[Index(columns: ['tenant_id', 'prompt_id', 'position'], unique: true, name: 'uniq_prompt_guidance_position')]
 #[TenantScoped(strategy: 'same_storage', column: 'tenant_id')]
 final readonly class PromptGuidanceResource
 {

@@ -47,9 +47,13 @@ final class PromptRenderer
      * Always bound — empty string when the tenant has said nothing — so a
      * template declaring `{{ guidance }}` renders unchanged under
      * `strict_variables` for everyone else. A template that does NOT print it
-     * never shows guidance at all: the position in the file is the permission,
-     * which is how a prompt author lets guidance reach tone while keeping it
-     * away from the rules a separate guard enforces.
+     * never shows guidance at all.
+     *
+     * Placement decides WHERE operator text lands, not what it is allowed to do:
+     * the whole prompt reaches the same model, so this is a structuring
+     * convention, not an enforcement boundary. See
+     * {@see PromptGuidanceProviderInterface} for what that does and does not
+     * buy you.
      */
     public const GUIDANCE_VARIABLE = PromptGuidanceProviderInterface::CONTEXT_VARIABLE;
 

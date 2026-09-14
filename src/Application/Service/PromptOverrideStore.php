@@ -249,7 +249,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
      * Restore a prior version: re-applies its body as a NEW override version
      * (the history stays append-only). Returns false if the version is unknown.
      */
-    public function revert(string $promptId, int $version, string $author = ''): bool
+    public function revert(string $promptId, int $version, string $author = '', string $reason = ''): bool
     {
         foreach ($this->historyRows($promptId) as $row) {
             if ($row->getVersion() === $version) {
@@ -260,7 +260,10 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
                     $promptId,
                     $row->getSystem(),
                     $author,
-                    sprintf('Restored version %d', $version),
+                    // The operator's own words win; the generated line is a
+                    // fallback for a restore nobody explained, not a replacement
+                    // for the audit context they supplied.
+                    $reason !== '' ? $reason : sprintf('Restored version %d', $version),
                 );
 
                 return true;

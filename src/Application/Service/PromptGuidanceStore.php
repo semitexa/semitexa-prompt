@@ -42,6 +42,9 @@ final class PromptGuidanceStore implements PromptGuidanceProviderInterface
 
     private const MEMO_KEY = 'prompt.guidance.memo';
 
+    /** How many times an add() re-reads the sequence after losing the position race. */
+    private const POSITION_ATTEMPTS = 3;
+
     #[InjectAsReadonly]
     protected OrmManager $orm;
 
@@ -106,23 +109,45 @@ final class PromptGuidanceStore implements PromptGuidanceProviderInterface
     ): PromptGuidance {
         $tenant = $this->currentTenantId();
 
-        $row = new PromptGuidance(
-            id: Uuid7::generate(),
-            tenantId: $tenant,
-            promptId: $promptId,
-            body: $body,
-            author: $author,
-            position: $this->nextPosition($promptId),
-            reason: $reason,
-            scope: $scope,
-            enabled: true,
-            createdAt: new \DateTimeImmutable(),
+        // The position is read-then-written, so two concurrent adds for the same
+        // (tenant, prompt) can reach for the same slot. A unique index makes the
+        // loser's insert fail rather than letting both land — and the order then
+        // stays the order they were given in, which is the one thing this column
+        // exists to guarantee. Bounded: a retry that never settles is a defect to
+        // surface, not to spin on.
+        $lastError = null;
+        for ($attempt = 0; $attempt < self::POSITION_ATTEMPTS; $attempt++) {
+            $row = new PromptGuidance(
+                id: Uuid7::generate(),
+                tenantId: $tenant,
+                promptId: $promptId,
+                body: $body,
+                author: $author,
+                position: $this->nextPosition($promptId),
+                reason: $reason,
+                scope: $scope,
+                enabled: true,
+                createdAt: new \DateTimeImmutable(),
+            );
+
+            try {
+                $this->scoped()->insert($row);
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                $this->forgetMemo($tenant);
+                continue;
+            }
+
+            $this->forgetMemo($tenant);
+
+            return $row;
+        }
+
+        throw new \RuntimeException(
+            sprintf('Could not allocate a guidance position for "%s" after %d attempts.', $promptId, self::POSITION_ATTEMPTS),
+            0,
+            $lastError,
         );
-
-        $this->scoped()->insert($row);
-        $this->forgetMemo($tenant);
-
-        return $row;
     }
 
     /**
