@@ -31,6 +31,9 @@ final class PromptRegistry implements PromptRepositoryInterface
     /** @var array<string, PromptTemplate>|null */
     private ?array $catalog = null;
 
+    /** @var array<string, PromptBodyMissingException> bodyless prompts, by id */
+    private array $broken = [];
+
     private ?PromptBodyLocator $bodyLocator = null;
 
     public function __construct(
@@ -45,12 +48,35 @@ final class PromptRegistry implements PromptRepositoryInterface
 
     public function tryGet(string $id): ?PromptTemplate
     {
-        return $this->catalog()[$id] ?? null;
+        $catalog = $this->catalog();
+        if (isset($this->broken[$id])) {
+            // Asked for by name, so the caller genuinely depends on it: this is
+            // exactly the case that must not fall back to a fallback.
+            throw $this->broken[$id];
+        }
+
+        return $catalog[$id] ?? null;
     }
 
     public function has(string $id): bool
     {
         return isset($this->catalog()[$id]);
+    }
+
+    /**
+     * Prompts that declared themselves and have no body, with the failure that
+     * says why — the tooling's read on {@see PromptBodyMissingException}.
+     *
+     * `prompt:list` reports these instead of a shorter, plausible catalog: a
+     * prompt missing from a listing looks exactly like a prompt nobody wrote.
+     *
+     * @return array<string, PromptBodyMissingException>
+     */
+    public function brokenIds(): array
+    {
+        $this->catalog();
+
+        return $this->broken;
     }
 
     /**
@@ -69,6 +95,11 @@ final class PromptRegistry implements PromptRepositoryInterface
      * used by tests. Duplicate ids are a hard error: two classes claiming the
      * same catalog key is a real misconfiguration, not something to paper over.
      *
+     * The result becomes THIS instance's catalog. It has to: the quarantine of
+     * bodyless prompts is instance state, and a seam that recorded it and then
+     * let the next read re-discover over the top would report the real
+     * installation's verdict for a hand-built list.
+     *
      * @param list<class-string> $classes
      * @return array<string, PromptTemplate>
      */
@@ -76,8 +107,22 @@ final class PromptRegistry implements PromptRepositoryInterface
     {
         $catalog = [];
         $owners = [];
+        $this->broken = [];
         foreach ($classes as $class) {
-            $template = $this->buildTemplate($class);
+            try {
+                $template = $this->buildTemplate($class);
+            } catch (PromptBodyMissingException $e) {
+                // Quarantined, not fatal. Throwing here would take the WHOLE
+                // catalog down on every call — the catalog memo is only assigned
+                // on success, so the throw repeats forever — and with it every
+                // LLM render in the application plus `prompt:list`, the one tool
+                // an operator would reach for to find out why. One misconfigured
+                // class must not be able to do that. The failure stays loud where
+                // it is somebody's problem: asking for THIS id by name throws,
+                // and the tooling reports it (see brokenIds()).
+                $this->broken[$e->promptId] = $e;
+                continue;
+            }
             if ($template === null) {
                 continue;
             }
@@ -93,7 +138,7 @@ final class PromptRegistry implements PromptRepositoryInterface
             $owners[$template->id] = $class;
         }
 
-        return $catalog;
+        return $this->catalog = $catalog;
     }
 
     /**
@@ -107,7 +152,7 @@ final class PromptRegistry implements PromptRepositoryInterface
 
         $classes = $this->classDiscovery()->findClassesWithAttribute(AsPrompt::class);
 
-        return $this->catalog = $this->buildFromClasses($classes);
+        return $this->buildFromClasses($classes);
     }
 
     private function buildTemplate(string $class): ?PromptTemplate
@@ -159,8 +204,8 @@ final class PromptRegistry implements PromptRepositoryInterface
                 metadata: ['class' => $class],
             );
         } catch (PromptBodyMissingException $e) {
-            // Deliberately escapes the catch-all below: a prompt with no body is a
-            // misconfiguration the operator must see, not a build hiccup to survive.
+            // Escapes the catch-all below so buildFromClasses() can quarantine it
+            // by id. Swallowing it here is what made a missing body invisible.
             throw $e;
         } catch (Throwable $e) {
             $this->logger?->warning('Failed to build prompt catalog entry', [

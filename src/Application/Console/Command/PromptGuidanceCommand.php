@@ -87,13 +87,17 @@ final class PromptGuidanceCommand extends Command
         $reason = $input->getOption('reason');
         $scope = $input->getOption('scope');
 
-        $row = $this->store->add(
-            promptId: $id,
-            body: $text,
-            author: $author,
-            reason: is_string($reason) ? $reason : '',
-            scope: is_string($scope) && $scope !== '' ? $scope : null,
-        );
+        try {
+            $row = $this->store->add(
+                promptId: $id,
+                body: $text,
+                author: $author,
+                reason: is_string($reason) ? $reason : '',
+                scope: is_string($scope) && $scope !== '' ? $scope : null,
+            );
+        } catch (\Throwable $e) {
+            return self::unreadable($io, $e);
+        }
 
         $io->success(sprintf('Guidance %s added to "%s".', $row->getId(), $id));
         $io->writeln('It reaches the prompt only where the template prints {{ guidance }}.');
@@ -104,7 +108,12 @@ final class PromptGuidanceCommand extends Command
     private function list(InputInterface $input, OutputInterface $output, SymfonyStyle $io): int
     {
         $id = $input->getOption('id');
-        $rows = $this->store->listAll(is_string($id) && $id !== '' ? $id : null);
+
+        try {
+            $rows = $this->store->listAll(is_string($id) && $id !== '' ? $id : null);
+        } catch (\Throwable $e) {
+            return self::unreadable($io, $e);
+        }
 
         if ((bool) $input->getOption('json')) {
             $output->writeln((string) json_encode(
@@ -185,6 +194,21 @@ final class PromptGuidanceCommand extends Command
         $io->writeln('Prefer "disable" next time: a disabled row still answers why the prompt behaves as it does.');
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * The store deliberately throws rather than answering "no guidance" when it
+     * cannot read at all — an admin listing that said "none" over a missing
+     * table would be worse than an error. Reporting it is this command's half of
+     * that bargain; without it the operator got a raw stack trace instead of the
+     * one instruction that fixes it.
+     */
+    private static function unreadable(SymfonyStyle $io, \Throwable $e): int
+    {
+        $io->error('Could not read prompt guidance: ' . $e->getMessage());
+        $io->writeln('If the prompt_guidance table is missing, run: bin/semitexa orm:sync');
+
+        return Command::FAILURE;
     }
 
     private function invalid(SymfonyStyle $io, string $action): int

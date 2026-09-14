@@ -40,32 +40,50 @@ final class PromptRegistryTest extends TestCase
     /**
      * Was "silently skipped" until 2026-09-14. A class that declares #[AsPrompt],
      * ships no template and implements no PromptDefinitionInterface has no body at
-     * all — the same class of misconfiguration as a duplicate id, and skipping it
-     * is what let two real prompts stay invisible for weeks behind a caller's
-     * fallback. The message must name where it looked, or the operator is no
-     * better off than with the old warning nobody had a logger to see.
+     * all — and skipping it is what let two real prompts stay invisible for weeks
+     * behind a caller's fallback.
+     *
+     * It is loud where it is somebody's problem — asking for THAT id by name —
+     * and not where it is everybody's. Throwing out of the catalog build instead
+     * would take down every LLM render in the application AND `prompt:list`, the
+     * one tool an operator would reach for to find out why, on every call
+     * forever: the catalog memo is only assigned on success.
      */
-    public function testClassWithNoBodyAtAllIsAHardError(): void
+    public function testAskingForABodylessPromptByNameThrows(): void
     {
         $registry = new PromptRegistry();
+        $registry->buildFromClasses([FixtureNotADefinition::class]);
 
         $this->expectException(PromptBodyMissingException::class);
         $this->expectExceptionMessageMatches('/Prompt "fix\.notadef".*has no body/');
         $this->expectExceptionMessageMatches('#resources/prompts/fix\.notadef\.twig#');
 
-        $registry->buildFromClasses([FixtureNotADefinition::class]);
+        $registry->tryGet('fix.notadef');
     }
 
-    public function testTheHardErrorNamesTheRootsItSearched(): void
+    public function testTheFailureNamesTheRootsItSearched(): void
     {
         $registry = new PromptRegistry();
+        $registry->buildFromClasses([FixtureNotADefinition::class]);
 
-        try {
-            $registry->buildFromClasses([FixtureNotADefinition::class]);
-            self::fail('Expected PromptBodyMissingException.');
-        } catch (PromptBodyMissingException $e) {
-            self::assertStringContainsString('semitexa-prompt', $e->getMessage());
-        }
+        $broken = $registry->brokenIds();
+
+        self::assertArrayHasKey('fix.notadef', $broken);
+        self::assertStringContainsString('semitexa-prompt', $broken['fix.notadef']->getMessage());
+    }
+
+    public function testOneBodylessPromptDoesNotTakeTheRestOfTheCatalogWithIt(): void
+    {
+        // The regression this shape exists for: a renamed prompt id whose .twig
+        // was not renamed used to be one missing prompt, then briefly became
+        // every prompt in the application.
+        $registry = new PromptRegistry();
+
+        $catalog = $registry->buildFromClasses([FixtureAlphaPrompt::class, FixtureNotADefinition::class]);
+
+        self::assertArrayHasKey('fix.alpha', $catalog);
+        self::assertSame('Alpha {{ x }}', $registry->tryGet('fix.alpha')?->system);
+        self::assertCount(1, $registry->all(), 'a bodyless prompt is not listed as if it worked');
     }
 
     public function testDuplicateIdIsAHardError(): void

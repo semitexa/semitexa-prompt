@@ -31,8 +31,17 @@ final class PromptBodyLocator
 {
     private const MODULES_SEGMENT = '/src/modules/';
 
-    /** @var array<string, string|null> memoized package roots by directory */
-    private array $packageRoots = [];
+    /**
+     * @var array<string, string|null> memoized package roots by directory
+     *
+     * Static on purpose, and safe to be: this is a pure directory -> directory
+     * map of the filesystem layout, carrying no request or tenant state, so the
+     * coroutine-shared-static hazard does not apply. It has to outlive the
+     * instance because PromptRenderer builds a fresh PromptRegistry — and so a
+     * fresh locator — for every bound-prompt render. Per-instance, the
+     * composer.json walk ran again on each one.
+     */
+    private static array $packageRoots = [];
 
     /**
      * The body text for an owner-relative $templateFile, given the file the
@@ -101,18 +110,18 @@ final class PromptBodyLocator
     /** Walk up from $dir to the nearest directory containing composer.json. */
     private function packageRootOf(string $dir): ?string
     {
-        if (\array_key_exists($dir, $this->packageRoots)) {
-            return $this->packageRoots[$dir];
+        if (\array_key_exists($dir, self::$packageRoots)) {
+            return self::$packageRoots[$dir];
         }
 
         $current = $dir;
         while (true) {
             if (is_file($current . '/composer.json')) {
-                return $this->packageRoots[$dir] = $current;
+                return self::$packageRoots[$dir] = $current;
             }
             $parent = \dirname($current);
             if ($parent === $current) {
-                return $this->packageRoots[$dir] = null;
+                return self::$packageRoots[$dir] = null;
             }
             $current = $parent;
         }

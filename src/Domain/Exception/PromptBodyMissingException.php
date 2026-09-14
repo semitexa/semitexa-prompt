@@ -20,6 +20,11 @@ use RuntimeException;
  */
 final class PromptBodyMissingException extends RuntimeException
 {
+    private function __construct(string $message, public readonly string $promptId)
+    {
+        parent::__construct($message);
+    }
+
     /**
      * @param list<string> $rootsSearched
      */
@@ -33,6 +38,6 @@ final class PromptBodyMissingException extends RuntimeException
             $rootsSearched === []
                 ? 'any resolvable owner root (the class file has no package or module root)'
                 : implode(' or ', $rootsSearched),
-        ));
+        ), $id);
     }
 }

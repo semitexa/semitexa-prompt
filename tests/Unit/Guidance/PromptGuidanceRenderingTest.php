@@ -146,6 +146,50 @@ final class PromptGuidanceRenderingTest extends TestCase
         self::assertSame('- From the caller.', $rendered->system);
     }
 
+    public function testAnIncludedPartialInheritsTheIncludingPromptsGuidance(): void
+    {
+        // Twig's include inherits the parent context, so guidance is scoped to
+        // the prompt that was RENDERED, not to each composed fragment. Pinned
+        // rather than left to be discovered: it qualifies "the position is the
+        // permission" — a partial that prints {{ guidance }} shows the including
+        // prompt's guidance wherever it is spliced in. No shipped partial prints
+        // it, and a prompt author composing one should know this before they do.
+        $renderer = $this->renderer([self::row('Fewer hashtags.')]);
+
+        $repository = new class implements \Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface {
+            public function get(string $id): PromptTemplate
+            {
+                return $this->tryGet($id)
+                    ?? throw \Semitexa\Prompt\Domain\Exception\PromptNotFoundException::forId($id);
+            }
+
+            public function tryGet(string $id): ?PromptTemplate
+            {
+                return $id === 'core.identity'
+                    ? new PromptTemplate(id: 'core.identity', system: 'Identity: {{ guidance }}')
+                    : null;
+            }
+
+            public function has(string $id): bool
+            {
+                return $this->tryGet($id) !== null;
+            }
+
+            public function all(): array
+            {
+                return [];
+            }
+        };
+
+        $rendered = $renderer->renderTemplate(
+            self::template("{{ include('core.identity') }}"),
+            [],
+            $repository,
+        );
+
+        self::assertStringContainsString('Fewer hashtags.', $rendered->system);
+    }
+
     public function testGuidanceIsNotReportedAsSomethingAnOperatorMustBind(): void
     {
         // variableNames() is what prompt:show tells an operator to supply. The
@@ -157,12 +201,34 @@ final class PromptGuidanceRenderingTest extends TestCase
         self::assertSame(['name'], $template->variableNames());
     }
 
-    public function testARendererWithNoProviderRendersTheCatalogBodyAlone(): void
+    public function testTheNewPathStillRendersWhenGuidanceCannotBeRead(): void
     {
-        // The `new` path — CLI, tests, own-template consumers — has no container
-        // to inject a provider. Guidance is a database layer; its absence must
-        // not be a render failure.
+        // Every production consumer builds this class with `new` — OsPersona,
+        // Planner, Weaver, SkillLoopRunner, SeoWriter, ConversationSummarizer —
+        // so that path falls back to building the store rather than skipping the
+        // feature. What must never happen either way is a render that fails
+        // because an ADDITIVE layer could not be read.
         $rendered = new PromptRenderer()->renderTemplate(self::template("Rules.\n{{ guidance }}"));
+
+        self::assertStringStartsWith('Rules.', $rendered->system);
+    }
+
+    public function testAProviderThatThrowsCannotTakeARenderDownWithIt(): void
+    {
+        $exploding = new class implements PromptGuidanceProviderInterface {
+            public function guidanceFor(string $promptId, ?string $scope = null): array
+            {
+                throw new \RuntimeException('the database is gone');
+            }
+
+            public function textFor(string $promptId, ?string $scope = null): string
+            {
+                throw new \RuntimeException('the database is gone');
+            }
+        };
+
+        $rendered = new PromptRenderer()->withGuidance($exploding)
+            ->renderTemplate(self::template("Rules.\n{{ guidance }}"));
 
         self::assertSame('Rules.', $rendered->system);
     }

@@ -115,7 +115,12 @@ final class PromptRenderer
     public function renderTemplate(PromptTemplate $template, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
         $repository ??= $this->repository();
-        $variables += [self::GUIDANCE_VARIABLE => $this->guidanceFor($template->id)];
+        // Not `+=`: that evaluates the right-hand side first, so a caller who
+        // already bound guidance — the documented scoped-guidance seam — would
+        // still pay for the store round-trip whose result is then discarded.
+        if (!array_key_exists(self::GUIDANCE_VARIABLE, $variables)) {
+            $variables[self::GUIDANCE_VARIABLE] = $this->guidanceFor($template->id);
+        }
         $twig = $this->twig($repository);
 
         $system = $this->renderSource($twig, $template->system, $template->id, $variables);
@@ -217,7 +222,7 @@ final class PromptRenderer
     }
 
     /**
-     * The guidance text for a prompt, or '' when there is no provider.
+     * The guidance text for a prompt, or '' when there is none.
      *
      * Bound as a VALUE, never re-parsed: Twig substitutes a variable's contents
      * without compiling them, so `{{ }}` or `{% %}` inside guidance written by
@@ -225,23 +230,35 @@ final class PromptRenderer
      * property that makes it safe to let other people's words into a prompt at
      * all, so it is pinned by a test rather than left to be rediscovered.
      *
-     * Absent on the `new` path (CLI, tests, own-template consumers), where there
-     * is no container to inject one; guidance is a database layer, and a
-     * renderer built without one renders the catalog body alone.
+     * Falls back to building the store, the same shape {@see repository()} uses
+     * — and for a sharper reason. Every production consumer of this class builds
+     * it with `new`: OsPersona, Planner, Weaver, SkillLoopRunner, SeoWriter,
+     * ConversationSummarizer. None is container-managed (PersonaRegistry, for
+     * one, does `new $class()`), so an injection-only lookup would have left the
+     * feature working in `prompt:render` and inert in every place a prompt is
+     * actually sent — an operator recording guidance, seeing it listed, seeing
+     * it previewed, and watching the assistant ignore every word of it.
+     *
+     * The repository fallback can choose the code catalog because a code catalog
+     * exists. Guidance has no code counterpart: the choice here is the store or
+     * nothing. The store itself degrades to '' when there is no table to read.
      */
     private function guidanceFor(string $promptId): string
     {
-        if (!isset($this->guidance)) {
-            return '';
-        }
-
         try {
-            return $this->guidance->textFor($promptId);
+            return $this->guidance()->textFor($promptId);
         } catch (Throwable) {
-            // The provider already degrades to '' on a read failure; this covers
-            // a provider that does not. An additive layer must never be the
-            // reason a prompt stops rendering.
+            // The store already degrades on a read failure; this covers a
+            // provider that does not, and the build itself. An additive layer
+            // must never be the reason a prompt stops rendering.
             return '';
         }
+    }
+
+    private function guidance(): PromptGuidanceProviderInterface
+    {
+        // `??` yields null for the uninitialised injected property on the `new`
+        // path, exactly as it does for the repository above.
+        return $this->guidance ??= new PromptGuidanceStore();
     }
 }

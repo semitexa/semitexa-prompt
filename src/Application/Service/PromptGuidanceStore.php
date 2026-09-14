@@ -253,9 +253,15 @@ final class PromptGuidanceStore implements PromptGuidanceProviderInterface
     }
 
     /**
-     * Oldest first — the order the guidance was given in, which is the order it
-     * reads in. The id breaks a tie only for rows written before positions
-     * existed, or by a concurrent pair that computed the same slot.
+     * Grouped by prompt, then oldest first within each — the order the guidance
+     * was given in, which is the order it reads in. The id breaks a tie only for
+     * rows written before positions existed, or by a concurrent pair that
+     * computed the same slot.
+     *
+     * Position alone is not enough to sort by: it is monotonic PER PROMPT, so an
+     * unfiltered listing sorted on it put every prompt's first row together,
+     * then every prompt's second, and read as scrambled the moment two prompts
+     * had guidance.
      *
      * @param list<PromptGuidance> $rows
      * @return list<PromptGuidance>
@@ -265,7 +271,8 @@ final class PromptGuidanceStore implements PromptGuidanceProviderInterface
         usort(
             $rows,
             static fn (PromptGuidance $a, PromptGuidance $b): int
-                => [$a->getPosition(), $a->getId()] <=> [$b->getPosition(), $b->getId()],
+                => [$a->getPromptId(), $a->getPosition(), $a->getId()]
+                <=> [$b->getPromptId(), $b->getPosition(), $b->getId()],
         );
 
         return $rows;
