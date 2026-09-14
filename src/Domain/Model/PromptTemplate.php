@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Prompt\Domain\Model;
 
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+use Semitexa\Prompt\Domain\Contract\PromptGuidanceProviderInterface;
 
 /**
  * A catalog entry: the *unrendered* definition of a prompt.
@@ -103,8 +104,18 @@ final readonly class PromptTemplate
             public array $refs = [];
             /** @var array<string, true> */
             public array $attrs = [];
-            /** @var array<string, true> The bound-object handle is never itself a bindable value. */
-            public array $locals = ['loop' => true, BoundPromptInterface::CONTEXT_VARIABLE => true];
+            /**
+             * @var array<string, true> Handles the FRAMEWORK supplies are never
+             * bindable values: the bound-object handle, and the guidance slot the
+             * renderer always fills. Listing `guidance` would tell an operator to
+             * bind something they must not — it is the one variable whose value
+             * is deliberately not theirs to pass.
+             */
+            public array $locals = [
+                'loop' => true,
+                BoundPromptInterface::CONTEXT_VARIABLE => true,
+                PromptGuidanceProviderInterface::CONTEXT_VARIABLE => true,
+            ];
 
             public function enterNode(\Twig\Node\Node $node, \Twig\Environment $env): \Twig\Node\Node
             {

@@ -9,6 +9,7 @@ use Semitexa\Prompt\Application\Service\PromptRegistry;
 use Semitexa\Prompt\Attribute\AsPrompt;
 use Semitexa\Prompt\Domain\Contract\FewShotProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptDefinitionInterface;
+use Semitexa\Prompt\Domain\Exception\PromptBodyMissingException;
 use Semitexa\Prompt\Domain\Model\PromptMessage;
 
 final class PromptRegistryTest extends TestCase
@@ -36,13 +37,35 @@ final class PromptRegistryTest extends TestCase
         self::assertSame('example', $catalog['fix.fewshot']->fewShot[0]->content);
     }
 
-    public function testClassWithoutDefinitionInterfaceIsSkipped(): void
+    /**
+     * Was "silently skipped" until 2026-09-14. A class that declares #[AsPrompt],
+     * ships no template and implements no PromptDefinitionInterface has no body at
+     * all — the same class of misconfiguration as a duplicate id, and skipping it
+     * is what let two real prompts stay invisible for weeks behind a caller's
+     * fallback. The message must name where it looked, or the operator is no
+     * better off than with the old warning nobody had a logger to see.
+     */
+    public function testClassWithNoBodyAtAllIsAHardError(): void
     {
         $registry = new PromptRegistry();
 
-        $catalog = $registry->buildFromClasses([FixtureNotADefinition::class]);
+        $this->expectException(PromptBodyMissingException::class);
+        $this->expectExceptionMessageMatches('/Prompt "fix\.notadef".*has no body/');
+        $this->expectExceptionMessageMatches('#resources/prompts/fix\.notadef\.twig#');
 
-        self::assertSame([], $catalog);
+        $registry->buildFromClasses([FixtureNotADefinition::class]);
+    }
+
+    public function testTheHardErrorNamesTheRootsItSearched(): void
+    {
+        $registry = new PromptRegistry();
+
+        try {
+            $registry->buildFromClasses([FixtureNotADefinition::class]);
+            self::fail('Expected PromptBodyMissingException.');
+        } catch (PromptBodyMissingException $e) {
+            self::assertStringContainsString('semitexa-prompt', $e->getMessage());
+        }
     }
 
     public function testDuplicateIdIsAHardError(): void

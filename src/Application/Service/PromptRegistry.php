@@ -11,6 +11,7 @@ use Semitexa\Prompt\Attribute\AsPrompt;
 use Semitexa\Prompt\Domain\Contract\FewShotProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptDefinitionInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
+use Semitexa\Prompt\Domain\Exception\PromptBodyMissingException;
 use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
 use Semitexa\Prompt\Domain\Model\PromptTemplate;
 use Throwable;
@@ -29,6 +30,8 @@ final class PromptRegistry implements PromptRepositoryInterface
 {
     /** @var array<string, PromptTemplate>|null */
     private ?array $catalog = null;
+
+    private ?PromptBodyLocator $bodyLocator = null;
 
     public function __construct(
         private ?ClassDiscovery $classDiscovery = null,
@@ -130,14 +133,17 @@ final class PromptRegistry implements PromptRepositoryInterface
             // AsPrompt::$template, else the resources/prompts/{id}.twig
             // convention) is canonical; a class implementing the legacy
             // PromptDefinitionInterface::system() is the fallback during migration.
-            $system = $this->loadTemplateFile($ref, $attr->template ?? ('resources/prompts/' . $attr->id . '.twig'));
+            $templateFile = $attr->template ?? ('resources/prompts/' . $attr->id . '.twig');
+            $system = $this->loadTemplateFile($ref, $templateFile);
             if ($system === null) {
                 if (!$instance instanceof PromptDefinitionInterface) {
-                    $this->logger?->warning('#[AsPrompt] class has no resources/prompts template and no system()', [
-                        'class' => $class,
-                        'id' => $attr->id,
-                    ]);
-                    return null;
+                    $file = $ref->getFileName();
+                    throw PromptBodyMissingException::forClass(
+                        $class,
+                        $attr->id,
+                        $templateFile,
+                        $file === false ? [] : $this->bodyLocator()->rootsFor($file),
+                    );
                 }
                 $system = $instance->system();
             }
@@ -152,6 +158,10 @@ final class PromptRegistry implements PromptRepositoryInterface
                 fewShot: array_values($fewShot),
                 metadata: ['class' => $class],
             );
+        } catch (PromptBodyMissingException $e) {
+            // Deliberately escapes the catch-all below: a prompt with no body is a
+            // misconfiguration the operator must see, not a build hiccup to survive.
+            throw $e;
         } catch (Throwable $e) {
             $this->logger?->warning('Failed to build prompt catalog entry', [
                 'class' => $class,
@@ -162,13 +172,10 @@ final class PromptRegistry implements PromptRepositoryInterface
         }
     }
 
-    /** @var array<string, string|null> memoized package roots by directory */
-    private static array $packageRoots = [];
-
     /**
-     * The Twig body for a prompt, from a package-relative $templateFile path
-     * (e.g. `resources/prompts/core.identity.twig`) inside the package that owns
-     * the #[AsPrompt] class. Null when there is no such file.
+     * The Twig body for a prompt, from an owner-relative $templateFile path
+     * (e.g. `resources/prompts/core.identity.twig`) inside the package OR module
+     * that owns the #[AsPrompt] class. Null when no owner root holds that file.
      */
     private function loadTemplateFile(ReflectionClass $ref, string $templateFile): ?string
     {
@@ -177,34 +184,12 @@ final class PromptRegistry implements PromptRepositoryInterface
             return null;
         }
 
-        $root = $this->packageRootOf(\dirname($file));
-        if ($root === null) {
-            return null;
-        }
-
-        $path = $root . '/' . $templateFile;
-
-        return is_file($path) ? (string) file_get_contents($path) : null;
+        return $this->bodyLocator()->load($file, $templateFile);
     }
 
-    /** Walk up from $dir to the nearest directory containing composer.json. */
-    private function packageRootOf(string $dir): ?string
+    private function bodyLocator(): PromptBodyLocator
     {
-        if (array_key_exists($dir, self::$packageRoots)) {
-            return self::$packageRoots[$dir];
-        }
-
-        $current = $dir;
-        while (true) {
-            if (is_file($current . '/composer.json')) {
-                return self::$packageRoots[$dir] = $current;
-            }
-            $parent = \dirname($current);
-            if ($parent === $current) {
-                return self::$packageRoots[$dir] = null;
-            }
-            $current = $parent;
-        }
+        return $this->bodyLocator ??= new PromptBodyLocator();
     }
 
     private function classDiscovery(): ClassDiscovery

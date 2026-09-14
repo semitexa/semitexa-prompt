@@ -7,6 +7,7 @@ namespace Semitexa\Prompt\Application\Service;
 use Semitexa\Core\Attribute\AsService;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+use Semitexa\Prompt\Domain\Contract\PromptGuidanceProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
@@ -40,8 +41,38 @@ use Twig\Error\LoaderError;
 #[AsService]
 final class PromptRenderer
 {
+    /**
+     * The variable a prompt prints to admit operator guidance.
+     *
+     * Always bound — empty string when the tenant has said nothing — so a
+     * template declaring `{{ guidance }}` renders unchanged under
+     * `strict_variables` for everyone else. A template that does NOT print it
+     * never shows guidance at all: the position in the file is the permission,
+     * which is how a prompt author lets guidance reach tone while keeping it
+     * away from the rules a separate guard enforces.
+     */
+    public const GUIDANCE_VARIABLE = PromptGuidanceProviderInterface::CONTEXT_VARIABLE;
+
     #[InjectAsReadonly]
     protected PromptRepositoryInterface $repository;
+
+    #[InjectAsReadonly]
+    protected PromptGuidanceProviderInterface $guidance;
+
+    /**
+     * Test/CLI seam — production path uses property injection.
+     *
+     * It exists because `prompt:render` builds its renderer with `new` and yet
+     * promises "the exact text the LLM would receive". Once guidance is part of
+     * that text, a previewer without a provider quietly shows a DIFFERENT prompt
+     * from the one that ships — the one failure this command cannot be allowed.
+     */
+    public function withGuidance(PromptGuidanceProviderInterface $guidance): self
+    {
+        $this->guidance = $guidance;
+
+        return $this;
+    }
 
     /**
      * Render a catalog prompt — either by id with a variables array, or by
@@ -84,6 +115,7 @@ final class PromptRenderer
     public function renderTemplate(PromptTemplate $template, array $variables = [], ?PromptRepositoryInterface $repository = null): RenderedPrompt
     {
         $repository ??= $this->repository();
+        $variables += [self::GUIDANCE_VARIABLE => $this->guidanceFor($template->id)];
         $twig = $this->twig($repository);
 
         $system = $this->renderSource($twig, $template->system, $template->id, $variables);
@@ -182,5 +214,34 @@ final class PromptRenderer
         // `??` yields null for the uninitialised injected property on the `new`
         // path, so this lazily falls back to the plain code catalog there.
         return $this->repository ??= new PromptRegistry();
+    }
+
+    /**
+     * The guidance text for a prompt, or '' when there is no provider.
+     *
+     * Bound as a VALUE, never re-parsed: Twig substitutes a variable's contents
+     * without compiling them, so `{{ }}` or `{% %}` inside guidance written by
+     * an operator — or relayed from a chat room — is inert text. That is the
+     * property that makes it safe to let other people's words into a prompt at
+     * all, so it is pinned by a test rather than left to be rediscovered.
+     *
+     * Absent on the `new` path (CLI, tests, own-template consumers), where there
+     * is no container to inject one; guidance is a database layer, and a
+     * renderer built without one renders the catalog body alone.
+     */
+    private function guidanceFor(string $promptId): string
+    {
+        if (!isset($this->guidance)) {
+            return '';
+        }
+
+        try {
+            return $this->guidance->textFor($promptId);
+        } catch (Throwable) {
+            // The provider already degrades to '' on a read failure; this covers
+            // a provider that does not. An additive layer must never be the
+            // reason a prompt stops rendering.
+            return '';
+        }
     }
 }
