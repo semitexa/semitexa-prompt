@@ -25,6 +25,8 @@ final class PromptOverrideHistoryMapper implements ResourceModelMapperInterface
             version: $resourceModel->version,
             system: $resourceModel->system,
             createdAt: $resourceModel->created_at,
+            author: $resourceModel->author,
+            reason: $resourceModel->reason,
         );
     }
 
@@ -38,6 +40,8 @@ final class PromptOverrideHistoryMapper implements ResourceModelMapperInterface
             prompt_id: $domainModel->getPromptId(),
             version: $domainModel->getVersion(),
             system: $domainModel->getSystem(),
+            author: $domainModel->getAuthor(),
+            reason: $domainModel->getReason(),
             created_at: $domainModel->getCreatedAt() ?? new \DateTimeImmutable(),
         );
     }

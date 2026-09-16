@@ -19,6 +19,8 @@ final readonly class PromptOverrideVersion
         private int $version,
         private string $system,
         private ?\DateTimeImmutable $createdAt = null,
+        private string $author = '',
+        private string $reason = '',
     ) {}
 
     public function getId(): string
@@ -49,5 +51,17 @@ final readonly class PromptOverrideVersion
     public function getCreatedAt(): ?\DateTimeImmutable
     {
         return $this->createdAt;
+    }
+
+    /** Who saved this version. Empty for rows written before it was recorded. */
+    public function getAuthor(): string
+    {
+        return $this->author;
+    }
+
+    /** Why, in the requester's own words. Empty when none was given. */
+    public function getReason(): string
+    {
+        return $this->reason;
     }
 }

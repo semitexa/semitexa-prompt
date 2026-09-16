@@ -77,8 +77,14 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     /**
      * Set (or replace) one tenant override — the admin/live-edit write path.
      * Tenant-stamped; invalidates the per-request memo.
+     *
+     * $author and $reason are recorded on the version this save appends, not on
+     * the override row: the current body answers "what does it say", and only
+     * the timeline can answer "who changed it and why". Both default to empty so
+     * every existing caller keeps working — an unattributed save is worse than
+     * an attributed one, but far better than a save that now fails to compile.
      */
-    public function set(string $promptId, string $system): void
+    public function set(string $promptId, string $system, string $author = '', string $reason = ''): void
     {
         $tenant = $this->currentTenantId();
         $existing = $this->findRow($promptId);
@@ -120,7 +126,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
             $this->scoped()->update($row);
         }
 
-        $this->recordHistory($tenant, $promptId, $system);
+        $this->recordHistory($tenant, $promptId, $system, $author, $reason);
         $this->forgetMemo($tenant);
     }
 
@@ -223,7 +229,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
     /**
      * The append-only version timeline for a prompt (newest first).
      *
-     * @return list<array{version: int, system: string, created_at: string}>
+     * @return list<array{version: int, system: string, created_at: string, author: string, reason: string}>
      */
     public function history(string $promptId): array
     {
@@ -234,6 +240,8 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
             'version' => $r->getVersion(),
             'system' => $r->getSystem(),
             'created_at' => ($r->getCreatedAt() ?? new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+            'author' => $r->getAuthor(),
+            'reason' => $r->getReason(),
         ], $rows);
     }
 
@@ -241,11 +249,22 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
      * Restore a prior version: re-applies its body as a NEW override version
      * (the history stays append-only). Returns false if the version is unknown.
      */
-    public function revert(string $promptId, int $version): bool
+    public function revert(string $promptId, int $version, string $author = '', string $reason = ''): bool
     {
         foreach ($this->historyRows($promptId) as $row) {
             if ($row->getVersion() === $version) {
-                $this->set($promptId, $row->getSystem());
+                // The new version records that it is a restore of an older one.
+                // Copying the original's author would credit them with a
+                // decision somebody else made today.
+                $this->set(
+                    $promptId,
+                    $row->getSystem(),
+                    $author,
+                    // The operator's own words win; the generated line is a
+                    // fallback for a restore nobody explained, not a replacement
+                    // for the audit context they supplied.
+                    $reason !== '' ? $reason : sprintf('Restored version %d', $version),
+                );
 
                 return true;
             }
@@ -258,7 +277,7 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
      * Append a version row for a save. Best-effort: a history-log failure must
      * not fail the save itself (the current override is already written).
      */
-    private function recordHistory(string $tenant, string $promptId, string $system): void
+    private function recordHistory(string $tenant, string $promptId, string $system, string $author = '', string $reason = ''): void
     {
         try {
             $next = 1;
@@ -275,6 +294,8 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
                 version: $next,
                 system: $system,
                 createdAt: new \DateTimeImmutable(),
+                author: $author,
+                reason: $reason,
             ));
         } catch (\Throwable $e) {
             if (!isset(self::$loggedFailures['history:' . $tenant])) {

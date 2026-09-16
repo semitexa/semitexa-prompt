@@ -46,6 +46,21 @@ final readonly class PromptOverrideHistoryResource
         #[Column(type: MySqlType::LongText)]
         public string $system,
 
+        /**
+         * Who saved this version, and why they were asked to.
+         *
+         * The timeline used to record only WHAT the prompt said at each point.
+         * For a human editing prompts occasionally that is survivable; for
+         * anything driven by other people's requests it is not — six months on,
+         * the row explains what the prompt says and nothing about why it says
+         * it, which is the only question anybody asks of it.
+         */
+        #[Column(type: MySqlType::Varchar, length: 191)]
+        public string $author,
+
+        #[Column(type: MySqlType::Text)]
+        public string $reason,
+
         #[Column(type: MySqlType::Datetime)]
         public \DateTimeImmutable $created_at,
     ) {}

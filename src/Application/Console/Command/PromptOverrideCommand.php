@@ -35,6 +35,8 @@ final class PromptOverrideCommand extends Command
             ->addOption('id', null, InputOption::VALUE_REQUIRED, 'Prompt id (for set/remove/history/revert)')
             ->addOption('system', null, InputOption::VALUE_REQUIRED, 'Override system text (for set)')
             ->addOption('rev', null, InputOption::VALUE_REQUIRED, 'Version number to restore (for revert)')
+            ->addOption('author', null, InputOption::VALUE_REQUIRED, 'Who made this change (recorded on the version)')
+            ->addOption('reason', null, InputOption::VALUE_REQUIRED, 'Why, in their words (recorded on the version)')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output as JSON (list/history)');
     }
 
@@ -83,9 +85,18 @@ final class PromptOverrideCommand extends Command
             if (mb_strlen($preview) > 70) {
                 $preview = mb_substr($preview, 0, 70) . '…';
             }
-            $rows[] = ['v' . $v['version'], $v['created_at'], $preview];
+            $rows[] = [
+                'v' . $v['version'],
+                $v['created_at'],
+                $v['author'] !== '' ? $v['author'] : '—',
+                $v['reason'] !== '' ? $v['reason'] : '—',
+                $preview,
+            ];
         }
-        $io->table(['Version', 'Saved at', 'System (first line)'], $rows);
+        // Author and reason are the whole point of the timeline: the text of a
+        // version is visible in the prompt, and who changed it and why is not
+        // recoverable anywhere else.
+        $io->table(['Version', 'Saved at', 'Author', 'Reason', 'System (first line)'], $rows);
 
         return Command::SUCCESS;
     }
@@ -100,7 +111,7 @@ final class PromptOverrideCommand extends Command
             return Command::INVALID;
         }
 
-        if ($this->store->revert($id, (int) $version)) {
+        if ($this->store->revert($id, (int) $version, self::author($input), self::reason($input))) {
             $io->success(sprintf('Restored "%s" to version %s (as a new version).', $id, $version));
 
             return Command::SUCCESS;
@@ -121,10 +132,24 @@ final class PromptOverrideCommand extends Command
             return Command::INVALID;
         }
 
-        $this->store->set($id, $system);
+        $this->store->set($id, $system, self::author($input), self::reason($input));
         $io->success(sprintf('Override set for "%s".', $id));
 
         return Command::SUCCESS;
+    }
+
+    private static function author(InputInterface $input): string
+    {
+        $author = $input->getOption('author');
+
+        return is_string($author) ? $author : '';
+    }
+
+    private static function reason(InputInterface $input): string
+    {
+        $reason = $input->getOption('reason');
+
+        return is_string($reason) ? $reason : '';
     }
 
     private function remove(InputInterface $input, SymfonyStyle $io): int

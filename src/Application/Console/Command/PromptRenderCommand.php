@@ -8,6 +8,7 @@ use Semitexa\Core\Attribute\AsCommand;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Prompt\Application\Service\PromptRenderer;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+use Semitexa\Prompt\Domain\Contract\PromptGuidanceProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
@@ -27,6 +28,14 @@ final class PromptRenderCommand extends Command
      */
     #[InjectAsReadonly]
     protected PromptRepositoryInterface $repository;
+
+    /**
+     * Guidance is part of the effective prompt too, and the renderer below is
+     * built with `new` — so it has to be handed in, or this command would print
+     * a prompt the LLM never sees.
+     */
+    #[InjectAsReadonly]
+    protected PromptGuidanceProviderInterface $guidance;
 
     protected function configure(): void
     {
@@ -70,6 +79,9 @@ final class PromptRenderCommand extends Command
         $variables = [BoundPromptInterface::CONTEXT_VARIABLE => $variables] + $variables;
 
         $renderer = new PromptRenderer();
+        if (isset($this->guidance)) {
+            $renderer = $renderer->withGuidance($this->guidance);
+        }
 
         try {
             $rendered = $renderer->render($id, $variables, $this->repository);

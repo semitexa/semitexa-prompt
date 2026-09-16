@@ -10,7 +10,7 @@ use Attribute;
  * Marks a class as a discoverable prompt-catalog definition.
  *
  * The class is thin: metadata only. Its Twig body lives in a template file
- * under the owning package's `resources/prompts/`, named by {@see $template}
+ * under the owning package's or module's `resources/prompts/`, named by {@see $template}
  * (or, when omitted, by the convention `{id}.twig`). A class may implement
  * {@see \Semitexa\Prompt\Domain\Contract\FewShotProviderInterface} to ship typed
  * few-shot examples. {@see \Semitexa\Prompt\Application\Service\PromptRegistry}
@@ -30,10 +30,13 @@ final class AsPrompt
         public ?string $description = null,
         /**
          * The Twig template file holding this prompt's body, as a path RELATIVE
-         * TO THE OWNING PACKAGE ROOT — e.g. `resources/prompts/core.identity.twig`.
-         * Self-documenting: it names both the folder and the file, so the link is
-         * explicit without knowing any convention. When null, the registry falls
-         * back to `resources/prompts/{id}.twig`.
+         * TO THE OWNING PACKAGE OR MODULE ROOT — e.g.
+         * `resources/prompts/core.identity.twig`. Self-documenting: it names both
+         * the folder and the file, so the link is explicit without knowing any
+         * convention. When null, the registry falls back to
+         * `resources/prompts/{id}.twig`. An application module needs no
+         * composer.json for this to resolve — see {@see
+         * \Semitexa\Prompt\Application\Service\PromptBodyLocator}.
          */
         public ?string $template = null,
     ) {}

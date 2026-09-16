@@ -30,6 +30,10 @@ final class PromptListCommand extends Command
         $channel = $input->getOption('channel');
 
         $templates = $registry->all();
+        // Reported, never omitted. A prompt missing from a listing looks exactly
+        // like a prompt nobody wrote, which is the silence this whole change is
+        // about — so a bodyless one is named here and sets the exit code.
+        $broken = $registry->brokenIds();
         if (is_string($channel) && $channel !== '') {
             $templates = array_values(array_filter(
                 $templates,
@@ -45,15 +49,21 @@ final class PromptListCommand extends Command
                 'variables' => $t->variableNames(),
                 'partials' => $t->partialIds(),
             ], $templates);
-            $output->writeln((string) json_encode(['prompts' => $rows], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $output->writeln((string) json_encode([
+                'prompts' => $rows,
+                'broken' => array_map(
+                    static fn(\Throwable $e): string => $e->getMessage(),
+                    $broken,
+                ),
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-            return Command::SUCCESS;
+            return $broken === [] ? Command::SUCCESS : Command::FAILURE;
         }
 
         $io = new SymfonyStyle($input, $output);
         $io->title('Prompt Catalog');
 
-        if ($templates === []) {
+        if ($templates === [] && $broken === []) {
             $io->warning('No prompts registered. Add #[AsPrompt] to a PromptDefinitionInterface class.');
 
             return Command::SUCCESS;
@@ -70,8 +80,20 @@ final class PromptListCommand extends Command
             ];
         }
 
-        $io->table(['Id', 'Channel', 'Variables', 'Description'], $rows);
-        $io->text(sprintf('Total: %d prompt(s).', count($templates)));
+        if ($rows !== []) {
+            $io->table(['Id', 'Channel', 'Variables', 'Description'], $rows);
+            $io->text(sprintf('Total: %d prompt(s).', count($templates)));
+        }
+
+        if ($broken !== []) {
+            $io->newLine();
+            $io->error(sprintf('%d prompt(s) declared with no body:', count($broken)));
+            foreach ($broken as $message) {
+                $io->writeln('  ' . $message->getMessage());
+            }
+
+            return Command::FAILURE;
+        }
 
         return Command::SUCCESS;
     }

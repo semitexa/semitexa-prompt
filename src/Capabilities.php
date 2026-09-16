@@ -19,12 +19,13 @@ use Semitexa\Core\Attribute\Capability;
  */
 #[Capability(
     id: 'prompt.catalog',
-    summary: 'Prompts as discoverable Twig templates declared with #[AsPrompt], composable and overridable per tenant.',
+    summary: 'Prompts as discoverable Twig templates declared with #[AsPrompt], composable, overridable per tenant, and open to attributable operator guidance at a point the template declares.',
     useWhen: 'Prompt text has to be edited, reviewed or varied per tenant without touching PHP.',
     avoidWhen: 'One short fixed instruction used in exactly one place.',
     replaces: [
         'heredoc prompt strings inside the service that sends them',
         'a per-tenant if-branch selecting between copies of the same prompt',
+        'rewriting a whole prompt to honour one sentence of operator feedback',
     ],
     seeAlso: 'semitexa/llm',
 )]
