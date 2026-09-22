@@ -11,7 +11,6 @@ use Semitexa\Prompt\Domain\Contract\PromptGuidanceProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
 use Semitexa\Prompt\Domain\Exception\PromptRenderException;
-use Semitexa\Prompt\Domain\Model\PromptMessage;
 use Semitexa\Prompt\Domain\Model\PromptTemplate;
 use Semitexa\Prompt\Domain\Model\RenderedPrompt;
 use Throwable;
