@@ -69,7 +69,9 @@ final class PromptRegistryTest extends TestCase
         $broken = $registry->brokenIds();
 
         self::assertArrayHasKey('fix.notadef', $broken);
-        self::assertStringContainsString('semitexa-prompt', $broken['fix.notadef']->getMessage());
+        // The package root, wherever it is installed: packages/semitexa-prompt
+        // in the monorepo, vendor/semitexa/prompt in an app.
+        self::assertStringContainsString(dirname(__DIR__, 3), $broken['fix.notadef']->getMessage());
     }
 
     public function testOneBodylessPromptDoesNotTakeTheRestOfTheCatalogWithIt(): void
