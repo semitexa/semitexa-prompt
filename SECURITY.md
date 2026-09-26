@@ -5,13 +5,9 @@
 **Do not open a public issue for a security problem.** A public report tells
 everyone who runs this framework about the hole at the same moment it tells us.
 
-Report it privately, either way:
-
-- **GitHub Security Advisories** — [open a private report](https://github.com/semitexa/semitexa-prompt/security/advisories/new).
-  This keeps the discussion, the fix and the eventual advisory in one place, and
-  nothing is visible until we publish it.
-- **Email** — `support@semitexa.com`. Put "security" and the package name
-  (`semitexa/prompt`) in the subject.
+Report it privately, by email: `support@semitexa.com`. Put "security" and the
+package name (`semitexa/prompt`) in the subject. Nothing about the report is made
+public until we publish an advisory.
 
 Include whatever you have: the version you are on, what you did, and what
 happened. A minimal reproduction is worth more than a long description, but send
