@@ -92,7 +92,7 @@ final class PromptRenderCommand extends Command
         }
 
         if ((bool) $input->getOption('json')) {
-            $output->writeln((string) json_encode($rendered->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $output->writeln((string) json_encode($rendered->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), OutputInterface::OUTPUT_RAW);
 
             return Command::SUCCESS;
         }

@@ -67,7 +67,7 @@ final class PromptOverrideCommand extends Command
         $versions = $this->store->history($id);
 
         if ((bool) $input->getOption('json')) {
-            $output->writeln((string) json_encode(['id' => $id, 'versions' => $versions], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $output->writeln((string) json_encode(['id' => $id, 'versions' => $versions], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), OutputInterface::OUTPUT_RAW);
 
             return Command::SUCCESS;
         }
@@ -190,7 +190,7 @@ final class PromptOverrideCommand extends Command
             foreach ($overrides as $id => $entry) {
                 $payload[$id] = ['drift' => $entry['drift']->value] + $entry;
             }
-            $output->writeln((string) json_encode(['overrides' => $payload], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $output->writeln((string) json_encode(['overrides' => $payload], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), OutputInterface::OUTPUT_RAW);
 
             return Command::SUCCESS;
         }
