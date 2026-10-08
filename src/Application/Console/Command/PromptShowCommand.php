@@ -53,7 +53,7 @@ final class PromptShowCommand extends Command
                 'system' => $template->system,
                 'few_shot' => array_map(static fn($m): array => $m->toArray(), $template->fewShot),
                 'metadata' => $template->metadata,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), OutputInterface::OUTPUT_RAW);
 
             return Command::SUCCESS;
         }

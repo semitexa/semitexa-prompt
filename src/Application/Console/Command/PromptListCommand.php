@@ -55,7 +55,7 @@ final class PromptListCommand extends Command
                     static fn(\Throwable $e): string => $e->getMessage(),
                     $broken,
                 ),
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), OutputInterface::OUTPUT_RAW);
 
             return $broken === [] ? Command::SUCCESS : Command::FAILURE;
         }

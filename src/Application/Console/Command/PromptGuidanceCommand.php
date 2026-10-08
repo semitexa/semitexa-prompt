@@ -128,7 +128,7 @@ final class PromptGuidanceCommand extends Command
                     'created_at' => $g->getCreatedAt()?->format(\DateTimeInterface::ATOM),
                 ], $rows),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
-            ));
+            ), OutputInterface::OUTPUT_RAW);
 
             return Command::SUCCESS;
         }
