@@ -33,6 +33,11 @@
         "semitexa-module": {
             "name": "prompt",
             "description": "Prompt catalog: discoverable prompt templates, variable binding, partial composition and render/inspect CLI"
+        },
+        "semitexa": {
+            "floors": {
+                "semitexa/update": "next"
+            }
         }
     },
     "keywords": [

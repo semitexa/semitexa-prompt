@@ -40,6 +40,20 @@ final class PromptOverrideDriftAdvisoryTest extends TestCase
         );
     }
 
+    /**
+     * tk-prompt-advisory-before-schema: update asks its advisories before the schema sync, so on
+     * a fresh database (a clean E2E one, a first install) the table is not there yet. That is no
+     * override, not a failed check.
+     */
+    #[Test]
+    public function a_database_without_the_override_table_yet_says_nothing(): void
+    {
+        $this->orm = new OrmManager(config: new ConnectionConfig(driver: 'sqlite', sqliteMemory: true));
+
+        self::assertFalse($this->store()->isInstalled());
+        self::assertNull($this->advisory()->advise());
+    }
+
     #[Test]
     public function an_install_with_no_overrides_says_nothing_at_all(): void
     {

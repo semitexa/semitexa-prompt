@@ -13,6 +13,7 @@ use Semitexa\Core\Tenant\TenantContextAccess;
 use Semitexa\Core\Tenant\TenantContextStoreInterface;
 use Semitexa\Orm\Application\Service\Uuid7;
 use Semitexa\Orm\Application\Service\OrmBackedStore;
+use Semitexa\Orm\Metadata\ResourceModelMetadataRegistry;
 use Semitexa\Orm\OrmManager;
 use Semitexa\Orm\Query\Operator;
 use Semitexa\Orm\Query\SystemScopeToken;
@@ -23,6 +24,7 @@ use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
 use Semitexa\Prompt\Domain\Model\PromptOverride;
 use Semitexa\Prompt\Domain\Model\PromptOverrideVersion;
 use Semitexa\Prompt\Domain\Enum\OverrideDrift;
+use Semitexa\Update\Application\Service\LiveSchemaInspector;
 
 /**
  * DB-backed per-tenant prompt overrides — the live-editable layer over the
@@ -171,6 +173,19 @@ final class PromptOverrideStore implements PromptOverrideProviderInterface
         ksort($out);
 
         return $out;
+    }
+
+    /**
+     * Whether the override table exists yet. On a fresh database it does not until the first
+     * schema sync, and bin/semitexa update asks its advisories before that sync: nothing can
+     * have been overridden in a table that is not there (tk-prompt-advisory-before-schema,
+     * found on a clean E2E database).
+     */
+    public function isInstalled(): bool
+    {
+        $table = ResourceModelMetadataRegistry::default()->for(PromptOverrideResource::class)->tableName;
+
+        return (new LiveSchemaInspector($this->orm()->getQueryAdapter()))->hasTable($table);
     }
 
     /**

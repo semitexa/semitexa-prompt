@@ -39,6 +39,11 @@ final class PromptOverrideDriftAdvisory implements UpdateAdvisoryInterface
         // that says the check could not run — which is the honest answer, and
         // the one thing this must never do is disappear quietly and let the
         // operator read the silence as "no overrides have drifted".
+        // Before the first schema sync of a fresh database there is no override table, and so no
+        // override: nothing to say. Only that case; any other failure still escapes, as above.
+        if (!$this->store()->isInstalled()) {
+            return null;
+        }
         $rows = $this->store()->statusAcrossTenants();
 
         if ($rows === []) {
