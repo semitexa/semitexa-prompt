@@ -14,7 +14,7 @@
         "semitexa/core": "*",
         "semitexa/orm": "*",
         "twig/twig": "^3.10",
-        "semitexa/update": "*"
+        "semitexa/update": ">=2026.11.15.0920 || dev-master"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0"
@@ -36,7 +36,7 @@
         },
         "semitexa": {
             "floors": {
-                "semitexa/update": "next"
+                "semitexa/update": "2026.11.15.0920"
             }
         }
     },
