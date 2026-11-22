@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Semitexa\Prompt\Application\Service;
 
+use Closure;
 use LogicException;
+use ReflectionFunction;
 use ReflectionMethod;
 use ReflectionProperty;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
@@ -109,31 +111,50 @@ final class PromptSandbox implements SecurityPolicyInterface
      * Same-name replacements for {@see self::OBJECT_CASTING_FILTERS}, for the
      * sandboxed environment only. Each refuses an object Twig would cast and
      * otherwise calls Twig's own filter, so text and arrays come out as before.
+     *
+     * A replacement declares the very parameters Twig's filter does. Twig binds
+     * a template's named arguments (`join(glue=', ')`) to the parameter names of
+     * the callable it is given, so a catch-all `...$arguments` would turn every
+     * named call into "Unknown argument".
      */
     public function guards(): ExtensionInterface
     {
+        /**
+         * One per name in OBJECT_CASTING_FILTERS, each given Twig's own filter.
+         *
+         * @var array<string, Closure(Closure): Closure> $factories
+         */
+        $factories = [
+            // Twig: CoreExtension::join($value, $glue = '', $and = null)
+            'join' => static fn(Closure $original): Closure => static function (mixed $value, mixed $glue = '', mixed $and = null) use ($original): mixed {
+                self::refuseObject('join', $value);
+
+                return $original($value, $glue, $and);
+            },
+        ];
+
         $guards = [];
         foreach ((new CoreExtension())->getFilters() as $filter) {
             $name = $filter->getName();
             if (!in_array($name, self::OBJECT_CASTING_FILTERS, true)) {
                 continue;
             }
+            $factory = $factories[$name] ?? throw new LogicException(sprintf('The prompt sandbox has no guard for the Twig "%s" filter.', $name));
             $original = $filter->getCallable();
-            if (!is_callable($original) || $filter->needsEnvironment() || $filter->needsContext() || $filter->needsCharset()) {
-                // The guard passes its arguments straight through; a filter Twig
-                // calls with more than the template's own is not one it can stand in for.
+            if (!is_callable($original) || $filter->needsEnvironment() || $filter->needsContext() || $filter->needsCharset() || $filter->isVariadic()) {
+                // The guard passes the template's arguments straight through; a
+                // filter Twig calls with more than those is not one it can stand in for.
                 throw new LogicException(sprintf('The prompt sandbox cannot guard the Twig "%s" filter of this Twig version.', $name));
             }
-            $guards[] = new TwigFilter($name, static function (mixed $value, mixed ...$arguments) use ($name, $original): mixed {
-                if (is_object($value) && !$value instanceof Traversable) {
-                    throw new SecurityNotAllowedFilterError(
-                        sprintf('The "%s" filter is not allowed on a "%s" object: it would read the object\'s properties.', $name, $value::class),
-                        $name,
-                    );
-                }
+            $original = Closure::fromCallable($original);
 
-                return $original($value, ...$arguments);
-            });
+            $guard = $factory($original);
+            if (self::signature($guard) !== self::signature($original)) {
+                // Twig's filter gained, lost or renamed a parameter: the guard
+                // would no longer accept every call the filter does.
+                throw new LogicException(sprintf('The prompt sandbox guard for the Twig "%s" filter does not match this Twig version.', $name));
+            }
+            $guards[] = new TwigFilter($name, $guard);
         }
         if (count($guards) !== count(self::OBJECT_CASTING_FILTERS)) {
             throw new LogicException('The prompt sandbox found no Twig filter to guard for one of: ' . implode(', ', self::OBJECT_CASTING_FILTERS) . '.');
@@ -148,6 +169,33 @@ final class PromptSandbox implements SecurityPolicyInterface
                 return $this->guards;
             }
         };
+    }
+
+    private static function refuseObject(string $filter, mixed $value): void
+    {
+        if (is_object($value) && !$value instanceof Traversable) {
+            throw new SecurityNotAllowedFilterError(
+                sprintf('The "%s" filter is not allowed on a "%s" object: it would read the object\'s properties.', $filter, $value::class),
+                $filter,
+            );
+        }
+    }
+
+    /**
+     * What Twig binds a filter call to: each parameter's name, whether it may
+     * be left out and, if so, what it then is.
+     *
+     * @return list<array{string, bool, mixed}>
+     */
+    private static function signature(Closure $callable): array
+    {
+        $signature = [];
+        foreach ((new ReflectionFunction($callable))->getParameters() as $parameter) {
+            $optional = $parameter->isDefaultValueAvailable();
+            $signature[] = [$parameter->getName(), $optional, $optional ? $parameter->getDefaultValue() : null];
+        }
+
+        return $signature;
     }
 
     /**

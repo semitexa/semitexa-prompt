@@ -469,6 +469,78 @@ final class PromptOverrideSandboxTest extends TestCase
         self::assertSame($shipped->system, $override->system);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function joinCallForms(): iterable
+    {
+        yield 'no argument' => ["{{ ['a', 'b', 'c']|join }}", 'abc'];
+        yield 'positional glue' => ["{{ ['a', 'b', 'c']|join(', ') }}", 'a, b, c'];
+        yield 'positional glue and and' => ["{{ ['a', 'b', 'c']|join(', ', ' and ') }}", 'a, b and c'];
+        yield 'named glue' => ["{{ ['a', 'b', 'c']|join(glue=', ') }}", 'a, b, c'];
+        yield 'named glue, colon form' => ["{{ ['a', 'b', 'c']|join(glue: ', ') }}", 'a, b, c'];
+        yield 'named and alone' => ["{{ ['a', 'b', 'c']|join(and=' and ') }}", 'ab and c'];
+        yield 'named glue and and' => ["{{ ['a', 'b', 'c']|join(glue=', ', and=' and ') }}", 'a, b and c'];
+        yield 'named and before glue' => ["{{ ['a', 'b', 'c']|join(and=' and ', glue=', ') }}", 'a, b and c'];
+        yield 'positional glue, named and' => ["{{ ['a', 'b', 'c']|join(', ', and=' or ') }}", 'a, b or c'];
+        yield 'named glue on a mapping' => ["{{ {'x': 1, 'y': 2}|join(glue='-') }}", '1-2'];
+        yield 'named glue on an iterator' => ["{{ items|join(glue='+') }}", 'i+j'];
+        yield 'named and on one item' => ["{{ ['only']|join(and=' and ') }}", 'only'];
+        yield 'named glue on text' => ["{{ 'text'|join(glue=',') }}", 'text'];
+        yield 'a third positional argument, which Twig drops' => ["{{ ['a', 'b']|join(', ', ' and ', 'x') }}", 'a and b'];
+        yield 'through apply, named' => ["{% apply upper %}{{ ['a', 'b']|join(glue=', ') }}{% endapply %}", 'A, B'];
+        yield 'inside an arrow, named' => ["{{ [['a', 'b'], ['c']]|map(v => v|join(glue='+'))|join(and=' & ') }}", 'a+b & c'];
+    }
+
+    /**
+     * The sandbox's `join` takes every call Twig's own does — positional,
+     * named, `and` alone — and prints what the trusted environment prints.
+     */
+    #[DataProvider('joinCallForms')]
+    public function testTheGuardedJoinTakesEveryCallFormTwigsJoinDoes(string $body, string $expected): void
+    {
+        $shipped = (new PromptRenderer())->render('p', ['items' => new \ArrayIterator(['i', 'j'])], $this->layered(['p' => $body], []));
+        $override = (new PromptRenderer())->render('p', ['items' => new \ArrayIterator(['i', 'j'])], $this->layered(['p' => self::SHIPPED], ['p' => $body]));
+
+        self::assertSame($expected, $shipped->system);
+        self::assertSame($shipped->system, $override->system);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function joinCallsTwigRefuses(): iterable
+    {
+        yield 'an unknown named argument' => ["{{ ['a']|join(separator=', ') }}"];
+        yield 'glue given twice' => ["{{ ['a']|join(', ', glue='; ') }}"];
+    }
+
+    #[DataProvider('joinCallsTwigRefuses')]
+    public function testTheGuardedJoinRefusesWhatTwigsJoinRefuses(string $body): void
+    {
+        foreach ([$this->layered(['p' => $body], []), $this->layered(['p' => self::SHIPPED], ['p' => $body])] as $repo) {
+            try {
+                $rendered = (new PromptRenderer())->render('p', [], $repo);
+                self::fail('Rendered: ' . $rendered->system);
+            } catch (PromptRenderException $e) {
+                self::assertStringContainsString('Cannot render prompt "p"', $e->getMessage());
+            }
+        }
+    }
+
+    public function testNamedArgumentsDoNotGetAnObjectPastTheGuard(): void
+    {
+        foreach (["{{ helper|join(glue=', ') }}", "{{ prompt|join(and=' and ') }}", "{{ [helper]|first|join(and=' and ', glue=', ') }}"] as $override) {
+            $repo = $this->layered(['p' => self::SHIPPED], ['p' => $override]);
+            try {
+                $rendered = (new PromptRenderer())->render('p', ['prompt' => self::prompt(), 'helper' => (object) ['secret' => 'TOKEN']], $repo);
+                self::fail('The override rendered: ' . $rendered->system);
+            } catch (PromptRenderException $e) {
+                self::assertStringContainsString('The "join" filter is not allowed on a ', $e->getMessage());
+            }
+        }
+    }
+
     public function testAShippedPromptStillSerialises(): void
     {
         $repo = $this->layered(['p' => '{{ helper|json_encode }}'], []);
