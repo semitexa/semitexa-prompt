@@ -13,7 +13,7 @@
         "php": "^8.4",
         "semitexa/core": "*",
         "semitexa/orm": "*",
-        "twig/twig": "^3.10",
+        "twig/twig": "^3.28",
         "semitexa/update": ">=2026.11.15.0920 || dev-master"
     },
     "require-dev": {

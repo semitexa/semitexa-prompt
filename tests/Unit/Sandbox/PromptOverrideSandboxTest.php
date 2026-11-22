@@ -293,6 +293,53 @@ final class PromptOverrideSandboxTest extends TestCase
         self::assertSame(0, self::$hits);
     }
 
+    public function testAnOverrideIsRefusedAgainAfterAShippedRenderOfTheSameBody(): void
+    {
+        // The cached-template case: one process, the same prompt id and the
+        // very same body, first as an operator's override, then as shipped
+        // code, then as the override again. Whatever Twig kept from the shipped
+        // render must not be what the override runs as.
+        $body = '{{ prompt.shout("x") }} {{ ["a"]|map("' . self::PROBE . '::hit")|join }}';
+        $asOverride = $this->layered(['p' => self::SHIPPED], ['p' => $body]);
+        $asShipped = $this->layered(['p' => $body], []);
+        $renderer = new PromptRenderer();
+
+        $refused = function () use ($renderer, $asOverride): void {
+            self::$hits = 0;
+            try {
+                $rendered = $renderer->render('p', ['prompt' => self::prompt()], $asOverride);
+                self::fail('The override rendered: ' . $rendered->system);
+            } catch (PromptRenderException $e) {
+                self::assertStringContainsString('refused by the prompt sandbox', $e->getMessage());
+            }
+            self::assertSame(0, self::$hits);
+        };
+
+        $refused();
+        self::assertSame('X HIT', $renderer->render('p', ['prompt' => self::prompt()], $asShipped)->system);
+        $refused();
+        self::assertSame('X HIT', $renderer->render('p', ['prompt' => self::prompt()], $asShipped)->system);
+        $refused();
+    }
+
+    public function testAShippedPromptIncludedByAnOverrideIsSandboxedWithIt(): void
+    {
+        // An override cannot borrow a shipped prompt's trust by including it:
+        // what an operator-written body includes runs in its sandbox.
+        $repo = $this->layered(
+            ['p' => self::SHIPPED, 'tool' => '{{ prompt.shout(word) }}'],
+            ['p' => "{% set word = 'x' %}{{ include('tool') }}"],
+        );
+
+        try {
+            $rendered = (new PromptRenderer())->render('p', ['prompt' => self::prompt()], $repo);
+            self::fail('The override rendered: ' . $rendered->system);
+        } catch (PromptRenderException $e) {
+            self::assertStringContainsString('refused by the prompt sandbox', $e->getMessage());
+        }
+        self::assertSame(0, self::$hits);
+    }
+
     public function testABoundPromptRenderedThroughTheRepositoryIsSandboxed(): void
     {
         // The production call shape: render($boundPrompt, [], $layeredRepository).

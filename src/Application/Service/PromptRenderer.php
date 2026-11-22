@@ -18,6 +18,7 @@ use Twig\Environment;
 use Twig\Error\LoaderError;
 use Twig\Error\RuntimeError;
 use Twig\Sandbox\SecurityError;
+use Twig\TwigFunction;
 
 /**
  * Renders a {@see PromptTemplate} into a {@see RenderedPrompt} with Twig: the
@@ -33,8 +34,9 @@ use Twig\Sandbox\SecurityError;
  * edges) — token-trimming that never touches meaningful structure.
  *
  * A body an operator wrote (a DB override) is not code and is not trusted like
- * code: it renders in the {@see PromptSandbox}, which keeps it away from PHP
- * callables and from objects other than the bound prompt. An override the
+ * code: it renders in a separate Twig environment that is sandboxed as a whole
+ * (see {@see PromptSandbox}), which keeps it away from PHP callables and from
+ * objects other than the bound prompt. An override the
  * sandbox refuses is NOT replaced by the shipped prompt: the render fails with
  * a {@see PromptRenderException} that names the refused construct, and the
  * override stays in the store as written, for its author to fix or revert.
@@ -133,17 +135,19 @@ final class PromptRenderer
         if (!array_key_exists(self::GUIDANCE_VARIABLE, $variables)) {
             $variables[self::GUIDANCE_VARIABLE] = $this->guidanceFor($template->id);
         }
-        $loader = new PromptTwigLoader($repository);
-        $twig = $this->twig($loader);
+        $twig = $this->twig($repository);
 
-        $system = $this->renderSource($twig, $loader->inline($template->id, $template->system, $template->operatorWritten), $template->id, $variables);
+        // The body an operator wrote goes to the sandboxed environment and to
+        // no other; the shipped one renders where it always did.
+        $system = $template->operatorWritten
+            ? $this->renderSource($twig->sandboxed, $template->system, $template->id, $variables)
+            : $this->renderSource($twig->trusted, $template->system, $template->id, $variables);
 
         $messages = [];
         foreach ($template->fewShot as $i => $message) {
             // Few-shot messages come from the prompt's class, never from an
             // override, which carries the system text only.
-            $label = $template->id . ':fewshot:' . $i;
-            $content = $this->renderSource($twig, $loader->inline($label, $message->content, false), $label, $variables);
+            $content = $this->renderSource($twig->trusted, $message->content, $template->id . ':fewshot:' . $i, $variables);
             $messages[] = $message->withContent($content);
         }
 
@@ -175,18 +179,18 @@ final class PromptRenderer
     {
         $repository ??= $this->repository();
 
-        $loader = new PromptTwigLoader($repository);
-
-        return $this->renderSource($this->twig($loader), $loader->inline('(inline)', $source, false), '(inline)', $variables);
+        return $this->renderSource($this->twig($repository)->trusted, $source, '(inline)', $variables);
     }
 
     /**
      * @param array<string, mixed> $variables
      */
-    private function renderSource(Environment $twig, string $templateName, string $promptId, array $variables): string
+    private function renderSource(Environment $twig, string $source, string $promptId, array $variables): string
     {
         try {
-            $rendered = $twig->load($templateName)->render($variables);
+            $loader = $twig->getLoader();
+            \assert($loader instanceof PromptTwigLoader);
+            $rendered = $twig->load($loader->inline($promptId, $source))->render($variables);
         } catch (LoaderError $e) {
             throw PromptRenderException::unknownPartial($promptId, $e->getMessage());
         } catch (Throwable $e) {
@@ -218,21 +222,46 @@ final class PromptRenderer
     }
 
     /**
-     * The sandbox extension is always registered and switched on per source:
-     * only a body the loader says an operator wrote runs under the
-     * {@see PromptSandbox} allowlist, so a code-shipped prompt renders as it
-     * always did.
+     * The two Twig environments of one render.
+     *
+     * `trusted` is the one prompts have always rendered in, with nothing added
+     * but the function behind {@see PromptTwigLoader::SANDBOX_STUB}. `sandboxed`
+     * has the {@see PromptSandbox} switched on for everything it runs: the
+     * operator-written body it is given, and every prompt that body includes,
+     * shipped ones too. They share no loader and no compiled template: the cache
+     * directory and the cache keys both differ.
+     *
+     * A shipped prompt that includes an overridden one stays trusted itself:
+     * its loader serves the stub for that id, and the stub renders the override
+     * in the sandboxed environment with the variables the include passed on.
+     *
+     * @return object{trusted: Environment, sandboxed: Environment}
      */
-    private function twig(PromptTwigLoader $loader): Environment
+    private function twig(PromptRepositoryInterface $repository): object
     {
-        $twig = new Environment($loader, [
+        $sandboxed = $this->environment(new PromptTwigLoader($repository, sandboxed: true), 'sandboxed');
+        $sandboxed->addExtension((new PromptSandbox())->extension());
+
+        $trusted = $this->environment(new PromptTwigLoader($repository), '');
+        $trusted->addFunction(new TwigFunction(
+            PromptTwigLoader::SANDBOX_FUNCTION,
+            /** @param array<string, mixed> $context */
+            static fn(array $context, string $promptId): string => $sandboxed->load($promptId)->render($context),
+            ['needs_context' => true],
+        ));
+
+        return new readonly class($trusted, $sandboxed) {
+            public function __construct(public Environment $trusted, public Environment $sandboxed) {}
+        };
+    }
+
+    private function environment(PromptTwigLoader $loader, string $cacheSubdirectory): Environment
+    {
+        return new Environment($loader, [
             'autoescape' => false,
             'strict_variables' => true,
-            'cache' => $this->cacheDir(),
+            'cache' => $this->cacheDir($cacheSubdirectory),
         ]);
-        $twig->addExtension((new PromptSandbox())->extension($loader));
-
-        return $twig;
     }
 
     /**
@@ -254,13 +283,13 @@ final class PromptRenderer
         return false;
     }
 
-    private function cacheDir(): string
+    private function cacheDir(string $subdirectory = ''): string
     {
         // Owner-only (0o700): the compiled .php cache embeds fully-resolved prompt
         // bodies, including tenant-specific overrides. On a shared temp dir a
         // group/world-readable cache would leak that text to other local users.
         // All workers run as the same user, so owner-only keeps the shared cache.
-        $dir = sys_get_temp_dir() . '/semitexa-prompt-twig';
+        $dir = sys_get_temp_dir() . '/semitexa-prompt-twig' . ($subdirectory === '' ? '' : '/' . $subdirectory);
         if (!is_dir($dir)) {
             @mkdir($dir, 0o700, true);
         }

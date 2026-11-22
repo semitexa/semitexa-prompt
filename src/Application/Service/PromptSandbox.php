@@ -13,7 +13,6 @@ use Twig\Sandbox\SecurityNotAllowedMethodError;
 use Twig\Sandbox\SecurityNotAllowedPropertyError;
 use Twig\Sandbox\SecurityPolicy;
 use Twig\Sandbox\SecurityPolicyInterface;
-use Twig\Sandbox\SourcePolicyInterface;
 
 /**
  * The sandbox every operator-written prompt body renders in.
@@ -23,16 +22,20 @@ use Twig\Sandbox\SourcePolicyInterface;
  * a template hand a string to `map` / `filter` / `sort` / `reduce` and have PHP
  * call it, which turns "may edit a prompt" into "may run PHP on the host".
  *
- * So the sandbox is switched on PER SOURCE: {@see PromptTwigLoader} says, for
- * each template Twig is about to run, whether an operator wrote its body. Such
- * a body is compiled and run under the allowlist below; a code-shipped body
- * renders exactly as it always did.
+ * So an operator-written body is never given to the environment shipped prompts
+ * render in. It renders in a Twig environment of its own, sandboxed as a whole
+ * ({@see self::extension()}), together with every prompt it includes;
+ * {@see PromptTwigLoader} keeps the two apart. A code-shipped prompt renders
+ * exactly as it always did.
+ *
+ * Needs Twig 3.28: earlier versions have sandbox bypasses this relies on being
+ * closed, and no allowlist for tests.
  *
  * What an operator-written body may do:
  *  - tags, filters, functions and tests from the lists below — the ones that
  *    read and shape text. `map`, `filter`, `sort`, `reduce` and `find` stay,
  *    because Twig itself refuses anything but an arrow function (`v => v`) for
- *    them in a sandboxed source; a callable NAME is an error;
+ *    them in a sandboxed environment; a callable NAME is an error;
  *  - read the bound `prompt` object the way a shipped body does: its public
  *    properties and its public methods that take no parameters (the getters).
  *    Nothing can be passed to a method, and no other object can be called.
@@ -71,13 +74,10 @@ final class PromptSandbox implements SecurityPolicyInterface
         $this->allowlist->setStrict(true);
     }
 
-    /**
-     * The Twig extension that enforces this policy on the sources $sources
-     * names, and on no other.
-     */
-    public function extension(SourcePolicyInterface $sources): SandboxExtension
+    /** The Twig extension that sandboxes a whole environment under this policy. */
+    public function extension(): SandboxExtension
     {
-        return new SandboxExtension($this, false, $sources);
+        return new SandboxExtension($this, true);
     }
 
     /**
