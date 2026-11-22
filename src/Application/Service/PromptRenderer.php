@@ -16,6 +16,8 @@ use Semitexa\Prompt\Domain\Model\RenderedPrompt;
 use Throwable;
 use Twig\Environment;
 use Twig\Error\LoaderError;
+use Twig\Error\RuntimeError;
+use Twig\Sandbox\SecurityError;
 
 /**
  * Renders a {@see PromptTemplate} into a {@see RenderedPrompt} with Twig: the
@@ -29,6 +31,13 @@ use Twig\Error\LoaderError;
  * cache so each source compiles once. Rendered output is then run through a
  * SAFE normalisation (strip trailing spaces, collapse 3+ blank lines to 2, trim
  * edges) — token-trimming that never touches meaningful structure.
+ *
+ * A body an operator wrote (a DB override) is not code and is not trusted like
+ * code: it renders in the {@see PromptSandbox}, which keeps it away from PHP
+ * callables and from objects other than the bound prompt. An override the
+ * sandbox refuses is NOT replaced by the shipped prompt: the render fails with
+ * a {@see PromptRenderException} that names the refused construct, and the
+ * override stays in the store as written, for its author to fix or revert.
  *
  * Default repository: when the container builds this service, the bound
  * {@see PromptRepositoryInterface} is injected — the {@see LayeredPromptRepository}
@@ -124,13 +133,17 @@ final class PromptRenderer
         if (!array_key_exists(self::GUIDANCE_VARIABLE, $variables)) {
             $variables[self::GUIDANCE_VARIABLE] = $this->guidanceFor($template->id);
         }
-        $twig = $this->twig($repository);
+        $loader = new PromptTwigLoader($repository);
+        $twig = $this->twig($loader);
 
-        $system = $this->renderSource($twig, $template->system, $template->id, $variables);
+        $system = $this->renderSource($twig, $loader->inline($template->id, $template->system, $template->operatorWritten), $template->id, $variables);
 
         $messages = [];
         foreach ($template->fewShot as $i => $message) {
-            $content = $this->renderSource($twig, $message->content, $template->id . ':fewshot:' . $i, $variables);
+            // Few-shot messages come from the prompt's class, never from an
+            // override, which carries the system text only.
+            $label = $template->id . ':fewshot:' . $i;
+            $content = $this->renderSource($twig, $loader->inline($label, $message->content, false), $label, $variables);
             $messages[] = $message->withContent($content);
         }
 
@@ -152,25 +165,35 @@ final class PromptRenderer
      * Render a raw source string that is not in the catalog (`{% include %}`
      * tags still resolve against $repository).
      *
+     * $source is trusted like code and is NOT sandboxed (an included
+     * operator-written prompt still is): never pass it text an operator or a
+     * user wrote — give that a {@see PromptTemplate} marked `operatorWritten`.
+     *
      * @param array<string, mixed> $variables
      */
     public function renderString(string $source, array $variables = [], ?PromptRepositoryInterface $repository = null): string
     {
         $repository ??= $this->repository();
 
-        return $this->renderSource($this->twig($repository), $source, '(inline)', $variables);
+        $loader = new PromptTwigLoader($repository);
+
+        return $this->renderSource($this->twig($loader), $loader->inline('(inline)', $source, false), '(inline)', $variables);
     }
 
     /**
      * @param array<string, mixed> $variables
      */
-    private function renderSource(Environment $twig, string $source, string $promptId, array $variables): string
+    private function renderSource(Environment $twig, string $templateName, string $promptId, array $variables): string
     {
         try {
-            $rendered = $twig->createTemplate($source, $promptId)->render($variables);
+            $rendered = $twig->load($templateName)->render($variables);
         } catch (LoaderError $e) {
             throw PromptRenderException::unknownPartial($promptId, $e->getMessage());
         } catch (Throwable $e) {
+            if (self::isSandboxRefusal($e)) {
+                throw PromptRenderException::overrideRefused($promptId, $e->getMessage(), $e);
+            }
+
             throw new PromptRenderException(sprintf('Cannot render prompt "%s": %s', $promptId, $e->getMessage()), 0, $e);
         }
 
@@ -194,13 +217,41 @@ final class PromptRenderer
         return trim($joined);
     }
 
-    private function twig(PromptRepositoryInterface $repository): Environment
+    /**
+     * The sandbox extension is always registered and switched on per source:
+     * only a body the loader says an operator wrote runs under the
+     * {@see PromptSandbox} allowlist, so a code-shipped prompt renders as it
+     * always did.
+     */
+    private function twig(PromptTwigLoader $loader): Environment
     {
-        return new Environment(new PromptTwigLoader($repository), [
+        $twig = new Environment($loader, [
             'autoescape' => false,
             'strict_variables' => true,
             'cache' => $this->cacheDir(),
         ]);
+        $twig->addExtension((new PromptSandbox())->extension($loader));
+
+        return $twig;
+    }
+
+    /**
+     * Twig reports a refused construct as a SecurityError, and a callable name
+     * handed to `map` / `filter` / `sort` / `reduce` as a RuntimeError naming
+     * sandbox mode; a refusal inside an included prompt arrives wrapped.
+     */
+    private static function isSandboxRefusal(Throwable $e): bool
+    {
+        for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
+            if ($cause instanceof SecurityError) {
+                return true;
+            }
+            if ($cause instanceof RuntimeError && str_contains($cause->getMessage(), 'in sandbox mode')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function cacheDir(): string

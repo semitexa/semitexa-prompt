@@ -23,6 +23,9 @@ use Semitexa\Prompt\Domain\Model\PromptTemplate;
  * because callers expect a whole {@see PromptTemplate} back: an override only
  * carries the system text, so it is overlaid onto the catalog template
  * (preserving channel / few-shot / metadata) via {@see PromptTemplate::withSystem()}.
+ *
+ * Every template built from an override is marked operator-written, which is
+ * what makes {@see PromptRenderer} run it in the {@see PromptSandbox}.
  */
 #[SatisfiesRepositoryContract(of: PromptRepositoryInterface::class)]
 final class LayeredPromptRepository implements PromptRepositoryInterface
@@ -61,7 +64,7 @@ final class LayeredPromptRepository implements PromptRepositoryInterface
         if ($override !== null) {
             return $base !== null
                 ? $base->withSystem($override)
-                : new PromptTemplate(id: $id, system: $override);
+                : new PromptTemplate(id: $id, system: $override, operatorWritten: true);
         }
 
         return $base;
@@ -85,7 +88,7 @@ final class LayeredPromptRepository implements PromptRepositoryInterface
         foreach ($this->overrideMap() as $id => $system) {
             $byId[$id] = isset($byId[$id])
                 ? $byId[$id]->withSystem($system)
-                : new PromptTemplate(id: $id, system: $system);
+                : new PromptTemplate(id: $id, system: $system, operatorWritten: true);
         }
 
         $templates = array_values($byId);

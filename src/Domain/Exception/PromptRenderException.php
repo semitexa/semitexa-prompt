@@ -36,6 +36,21 @@ final class PromptRenderException extends RuntimeException
     }
 
     /**
+     * An operator-written body (a DB override) used something the prompt
+     * sandbox does not allow. Nothing is rendered in its place, and the
+     * override is left in the store exactly as it was written.
+     */
+    public static function overrideRefused(string $promptId, string $detail, ?\Throwable $previous = null): self
+    {
+        return new self(sprintf(
+            'Cannot render prompt "%s": an operator-written override was refused by the prompt sandbox (%s). '
+            . 'The override is kept as written; edit it, or remove it to return to the shipped prompt.',
+            $promptId,
+            $detail,
+        ), 0, $previous);
+    }
+
+    /**
      * @param list<string> $stack
      */
     public static function partialCycle(string $promptId, array $stack): self
