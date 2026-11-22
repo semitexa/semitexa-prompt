@@ -9,6 +9,7 @@ use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Attribute\SatisfiesServiceContract;
 use Semitexa\Core\Log\FallbackErrorLogger;
 use Semitexa\Core\Support\CoroutineLocal;
+use Semitexa\Core\Tenant\DefaultTenantContextStore;
 use Semitexa\Core\Tenant\TenantContextAccess;
 use Semitexa\Core\Tenant\TenantContextStoreInterface;
 use Semitexa\Orm\Application\Service\OrmBackedStore;
@@ -326,11 +327,27 @@ final class PromptGuidanceStore implements PromptGuidanceProviderInterface
         return $this->repository()->forTenant($this->currentTenantId());
     }
 
+    /**
+     * Current tenant id, or the 'default' sentinel when no tenant is active,
+     * never because the store was built bare.
+     */
     private function currentTenantId(): string
     {
-        $context = isset($this->tenantContextStore) ? $this->tenantContextStore->tryGet() : null;
+        return TenantContextAccess::tenantIdOrDefault($this->tenantContextStore()->tryGet());
+    }
 
-        return TenantContextAccess::tenantIdOrDefault($context);
+    /**
+     * The ambient tenant store, injected or built.
+     *
+     * Core's store reads the slot the active store wrote, so one built here
+     * sees the tenant an injected one would. Answering 'default' when the
+     * property was unset, which is what this did, read and wrote every
+     * tenant's guidance under one id for each caller that builds this store
+     * with `new`.
+     */
+    private function tenantContextStore(): TenantContextStoreInterface
+    {
+        return $this->tenantContextStore ??= new DefaultTenantContextStore();
     }
 
     private function repository(): DomainRepository
