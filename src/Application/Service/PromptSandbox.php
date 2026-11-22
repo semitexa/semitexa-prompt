@@ -47,9 +47,16 @@ final class PromptSandbox implements SecurityPolicyInterface
 {
     public const ALLOWED_TAGS = ['if', 'for', 'set', 'with', 'apply'];
 
+    /**
+     * No `json_encode`: it is PHP's own, and given an object it prints every
+     * public property, or whatever jsonSerialize() returns. A filter's argument
+     * does not go through {@see checkPropertyAllowed()} or
+     * {@see checkMethodAllowed()}, so the filter would read what the rules
+     * below refuse. A filter that serialises objects does not belong here.
+     */
     public const ALLOWED_FILTERS = [
         'abs', 'batch', 'capitalize', 'column', 'default', 'filter', 'find', 'first', 'format', 'join',
-        'json_encode', 'keys', 'last', 'length', 'lower', 'map', 'merge', 'number_format', 'reduce',
+        'keys', 'last', 'length', 'lower', 'map', 'merge', 'number_format', 'reduce',
         'replace', 'reverse', 'round', 'slice', 'sort', 'split', 'title', 'trim', 'upper',
     ];
 

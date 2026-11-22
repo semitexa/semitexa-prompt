@@ -340,6 +340,63 @@ final class PromptOverrideSandboxTest extends TestCase
         self::assertSame(0, self::$hits);
     }
 
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function serialisingOverrides(): iterable
+    {
+        yield 'an object' => ['{{ helper|json_encode }}'];
+        yield 'an object nested inside an array' => ['{{ box|json_encode }}'];
+        yield 'a JsonSerializable object' => ['{{ serialisable|json_encode }}'];
+        yield 'a JsonSerializable object nested inside an array' => ['{{ [1, {"deep": [serialisable]}]|json_encode }}'];
+        yield 'the bound prompt' => ['{{ prompt|json_encode }}'];
+        yield 'through apply' => ['{% apply json_encode %}{{ helper.secret }}{% endapply %}'];
+    }
+
+    /**
+     * `json_encode` is PHP's own: handed an object it prints every public
+     * property, or whatever jsonSerialize() returns, and a filter's argument
+     * never meets the sandbox's property and method rules. So an override does
+     * not get the filter at all — `{{ helper.secret }}` is refused, and
+     * `{{ helper|json_encode }}` must not be the way round it.
+     */
+    #[DataProvider('serialisingOverrides')]
+    public function testAnOverrideCannotSerialiseAnObjectItMayNotRead(string $override): void
+    {
+        $repo = $this->layered(['p' => self::SHIPPED], ['p' => $override]);
+        $variables = [
+            'prompt' => self::prompt(),
+            'helper' => (object) ['secret' => 'TOKEN'],
+            'box' => ['inner' => ['deeper' => (object) ['secret' => 'TOKEN']]],
+            'serialisable' => new class implements \JsonSerializable {
+                /** @return array{secret: string} */
+                public function jsonSerialize(): array
+                {
+                    PromptOverrideSandboxTest::$hits++;
+
+                    return ['secret' => 'TOKEN'];
+                }
+            },
+        ];
+
+        try {
+            $rendered = (new PromptRenderer())->render('p', $variables, $repo);
+            self::fail('The override rendered: ' . $rendered->system);
+        } catch (PromptRenderException $e) {
+            self::assertStringContainsString('refused by the prompt sandbox', $e->getMessage());
+        }
+        self::assertSame(0, self::$hits, 'jsonSerialize() was called.');
+    }
+
+    public function testAShippedPromptStillSerialises(): void
+    {
+        $repo = $this->layered(['p' => '{{ helper|json_encode }}'], []);
+
+        $rendered = (new PromptRenderer())->render('p', ['helper' => (object) ['a' => 1]], $repo);
+
+        self::assertSame('{"a":1}', $rendered->system);
+    }
+
     public function testABoundPromptRenderedThroughTheRepositoryIsSandboxed(): void
     {
         // The production call shape: render($boundPrompt, [], $layeredRepository).
