@@ -7,7 +7,6 @@ namespace Semitexa\Prompt\Tests\Unit\Guidance;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Semitexa\Core\Support\CoroutineLocal;
-use Semitexa\Core\Tenant\DefaultTenantContextStore;
 use Semitexa\Core\Tenant\Layer\TenantLayerInterface;
 use Semitexa\Core\Tenant\Layer\TenantLayerValueInterface;
 use Semitexa\Core\Tenant\TenantContextInterface;
@@ -23,6 +22,13 @@ use Semitexa\Prompt\Application\Service\PromptGuidanceStore;
  */
 final class PromptGuidanceStoreBuiltBareSeesTheTenantTest extends TestCase
 {
+    /**
+     * Written out, not taken from core's DefaultTenantContextStore::CONTEXT_KEY:
+     * it is the slot every released semitexa/tenancy writes, and the
+     * constant is private in cores before semitexa-core#258.
+     */
+    private const TENANCY_KEY = 'semitexa.tenancy.tenant_context';
+
     private OrmManager $orm;
 
     protected function setUp(): void
@@ -51,7 +57,7 @@ final class PromptGuidanceStoreBuiltBareSeesTheTenantTest extends TestCase
         // Both slots are process-wide out here: whatever another fixture left
         // in them is put back, not wiped.
         $memoKey = self::memoKey();
-        $previous = CoroutineLocal::get(DefaultTenantContextStore::CONTEXT_KEY);
+        $previous = CoroutineLocal::get(self::TENANCY_KEY);
         $previousMemo = CoroutineLocal::get($memoKey);
         CoroutineLocal::remove($memoKey);
         try {
@@ -66,7 +72,7 @@ final class PromptGuidanceStoreBuiltBareSeesTheTenantTest extends TestCase
             self::activate('tenant-acme');
             self::assertSame('- Acme rule.', $this->bareStore()->textFor('social.topic'), 'Acme renders only its own.');
         } finally {
-            self::putBack(DefaultTenantContextStore::CONTEXT_KEY, $previous);
+            self::putBack(self::TENANCY_KEY, $previous);
             self::putBack($memoKey, $previousMemo);
         }
 
@@ -145,7 +151,7 @@ final class PromptGuidanceStoreBuiltBareSeesTheTenantTest extends TestCase
 
     private static function activate(string $tenantId): void
     {
-        CoroutineLocal::set(DefaultTenantContextStore::CONTEXT_KEY, new class ($tenantId) implements TenantContextInterface {
+        CoroutineLocal::set(self::TENANCY_KEY, new class ($tenantId) implements TenantContextInterface {
             public function __construct(private readonly string $id) {}
 
             public function getTenantId(): string
