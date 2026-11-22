@@ -29,6 +29,10 @@ final readonly class PromptTemplate
     /**
      * @param list<PromptMessage>   $fewShot  few-shot examples folded into the rendered message list
      * @param array<string, string> $metadata free-form annotations (owner, model hint, ...)
+     * @param bool                  $operatorWritten true when the system text was typed by an operator
+     *                                               (a DB override) rather than shipped in code. The
+     *                                               renderer runs such a body in the prompt sandbox; a
+     *                                               repository that serves stored text must set it.
      */
     public function __construct(
         public string $id,
@@ -37,6 +41,7 @@ final readonly class PromptTemplate
         public string $description = '',
         public array $fewShot = [],
         public array $metadata = [],
+        public bool $operatorWritten = false,
     ) {}
 
     /**
@@ -44,6 +49,9 @@ final readonly class PromptTemplate
      * few-shot and metadata. Used by the DB override layer to overlay a
      * tenant-edited body onto the catalog default without losing its other
      * attributes.
+     *
+     * The copy is marked operator-written, so it renders sandboxed: a replaced
+     * body is not the one the code shipped, whoever replaced it.
      */
     public function withSystem(string $system): self
     {
@@ -54,6 +62,7 @@ final readonly class PromptTemplate
             description: $this->description,
             fewShot: $this->fewShot,
             metadata: $this->metadata,
+            operatorWritten: true,
         );
     }
 
