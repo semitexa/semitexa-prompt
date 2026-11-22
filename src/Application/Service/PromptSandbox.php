@@ -4,15 +4,22 @@ declare(strict_types=1);
 
 namespace Semitexa\Prompt\Application\Service;
 
+use LogicException;
 use ReflectionMethod;
 use ReflectionProperty;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
+use Traversable;
+use Twig\Extension\AbstractExtension;
+use Twig\Extension\CoreExtension;
+use Twig\Extension\ExtensionInterface;
 use Twig\Extension\SandboxExtension;
 use Twig\Markup;
+use Twig\Sandbox\SecurityNotAllowedFilterError;
 use Twig\Sandbox\SecurityNotAllowedMethodError;
 use Twig\Sandbox\SecurityNotAllowedPropertyError;
 use Twig\Sandbox\SecurityPolicy;
 use Twig\Sandbox\SecurityPolicyInterface;
+use Twig\TwigFilter;
 
 /**
  * The sandbox every operator-written prompt body renders in.
@@ -85,6 +92,62 @@ final class PromptSandbox implements SecurityPolicyInterface
     public function extension(): SandboxExtension
     {
         return new SandboxExtension($this, true);
+    }
+
+    /**
+     * Twig filters that turn an object into its state without asking the
+     * policy: `join` casts anything that is not iterable with `(array)`, which
+     * for an object is every property it has, private ones included.
+     *
+     * It is the only one. Every other construct on the lists above either
+     * refuses an object that is not iterable, hands it back untouched (and
+     * printing it is checked), or reads it through the policy, as `column` does.
+     */
+    public const OBJECT_CASTING_FILTERS = ['join'];
+
+    /**
+     * Same-name replacements for {@see self::OBJECT_CASTING_FILTERS}, for the
+     * sandboxed environment only. Each refuses an object Twig would cast and
+     * otherwise calls Twig's own filter, so text and arrays come out as before.
+     */
+    public function guards(): ExtensionInterface
+    {
+        $guards = [];
+        foreach ((new CoreExtension())->getFilters() as $filter) {
+            $name = $filter->getName();
+            if (!in_array($name, self::OBJECT_CASTING_FILTERS, true)) {
+                continue;
+            }
+            $original = $filter->getCallable();
+            if (!is_callable($original) || $filter->needsEnvironment() || $filter->needsContext() || $filter->needsCharset()) {
+                // The guard passes its arguments straight through; a filter Twig
+                // calls with more than the template's own is not one it can stand in for.
+                throw new LogicException(sprintf('The prompt sandbox cannot guard the Twig "%s" filter of this Twig version.', $name));
+            }
+            $guards[] = new TwigFilter($name, static function (mixed $value, mixed ...$arguments) use ($name, $original): mixed {
+                if (is_object($value) && !$value instanceof Traversable) {
+                    throw new SecurityNotAllowedFilterError(
+                        sprintf('The "%s" filter is not allowed on a "%s" object: it would read the object\'s properties.', $name, $value::class),
+                        $name,
+                    );
+                }
+
+                return $original($value, ...$arguments);
+            });
+        }
+        if (count($guards) !== count(self::OBJECT_CASTING_FILTERS)) {
+            throw new LogicException('The prompt sandbox found no Twig filter to guard for one of: ' . implode(', ', self::OBJECT_CASTING_FILTERS) . '.');
+        }
+
+        return new class($guards) extends AbstractExtension {
+            /** @param list<TwigFilter> $guards */
+            public function __construct(private readonly array $guards) {}
+
+            public function getFilters(): array
+            {
+                return $this->guards;
+            }
+        };
     }
 
     /**

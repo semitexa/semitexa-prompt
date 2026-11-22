@@ -240,7 +240,9 @@ final class PromptRenderer
     private function twig(PromptRepositoryInterface $repository): object
     {
         $sandboxed = $this->environment(new PromptTwigLoader($repository, sandboxed: true), 'sandboxed');
-        $sandboxed->addExtension((new PromptSandbox())->extension());
+        $sandbox = new PromptSandbox();
+        $sandboxed->addExtension($sandbox->extension());
+        $sandboxed->addExtension($sandbox->guards());
 
         $trusted = $this->environment(new PromptTwigLoader($repository), '');
         $trusted->addFunction(new TwigFunction(

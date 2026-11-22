@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Semitexa\Prompt\Application\Service\LayeredPromptRepository;
 use Semitexa\Prompt\Application\Service\PromptRenderer;
+use Semitexa\Prompt\Application\Service\PromptSandbox;
 use Semitexa\Prompt\Domain\Contract\BoundPromptInterface;
 use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
@@ -58,6 +59,9 @@ final class PromptOverrideSandboxTest extends TestCase
         return new class implements BoundPromptInterface {
             public string $label = 'public-label';
 
+            /** State no template may read: there is no getter for it. */
+            private string $internal = 'INTERNAL-STATE';
+
             public function promptId(): string
             {
                 return 'probe';
@@ -81,7 +85,7 @@ final class PromptOverrideSandboxTest extends TestCase
             {
                 PromptOverrideSandboxTest::$hits++;
 
-                return strtoupper($word);
+                return strtoupper($this->internal === '' ? '' : $word);
             }
 
             /** @return \ArrayObject<string, int> */
@@ -386,6 +390,83 @@ final class PromptOverrideSandboxTest extends TestCase
             self::assertStringContainsString('refused by the prompt sandbox', $e->getMessage());
         }
         self::assertSame(0, self::$hits, 'jsonSerialize() was called.');
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function objectCastingOverrides(): iterable
+    {
+        // Spelled out, not read from PromptSandbox: the list of what Twig casts
+        // is this test's claim; testEveryObjectCastingFilterIsGuardedAndAllowed()
+        // holds the sandbox to it.
+        foreach (['join'] as $filter) {
+            yield $filter . ': a plain object' => [$filter, '{{ helper|' . $filter . ' }}'];
+            yield $filter . ': a plain object, with arguments' => [$filter, "{{ helper|" . $filter . "(', ', ' and ') }}"];
+            yield $filter . ': the bound prompt' => [$filter, '{{ prompt|' . $filter . ' }}'];
+            yield $filter . ': a date' => [$filter, '{{ date|' . $filter . ' }}'];
+            // An array holding an object, on the paths that hand the object
+            // itself to the filter, which is where Twig would cast it.
+            yield $filter . ': an object taken from a list' => [$filter, '{{ [helper]|first|' . $filter . ' }}'];
+            yield $filter . ': an object taken from a mapping' => [$filter, '{{ {"k": helper}|last|' . $filter . ' }}'];
+            yield $filter . ': the bound prompt found in a list' => [$filter, '{{ [prompt]|find(v => true)|' . $filter . ' }}'];
+            yield $filter . ': an object kept by default' => [$filter, '{{ helper|default("none")|' . $filter . ' }}'];
+            yield $filter . ': each object of a list' => [$filter, '{{ [helper, prompt]|map(v => v|' . $filter . ')|first }}'];
+        }
+    }
+
+    /**
+     * Twig's `join` casts what is not iterable with `(array)`: for an object
+     * that is every property, private ones too, and no policy is asked. The
+     * sandboxed environment has its own `join`, which refuses the object.
+     */
+    #[DataProvider('objectCastingOverrides')]
+    public function testAnOverrideCannotCastAnObjectToItsState(string $filter, string $override): void
+    {
+        $repo = $this->layered(['p' => self::SHIPPED], ['p' => $override]);
+        $variables = [
+            'prompt' => self::prompt(),
+            'helper' => (object) ['secret' => 'TOKEN'],
+            'date' => new \DateTimeImmutable('2020-01-02 03:04:05'),
+        ];
+
+        try {
+            $rendered = (new PromptRenderer())->render('p', $variables, $repo);
+            self::fail('The override rendered: ' . $rendered->system);
+        } catch (PromptRenderException $e) {
+            self::assertStringContainsString('refused by the prompt sandbox', $e->getMessage());
+            self::assertStringContainsString('The "' . $filter . '" filter is not allowed on a ', $e->getMessage());
+        }
+    }
+
+    public function testEveryObjectCastingFilterIsGuardedAndAllowed(): void
+    {
+        $guarded = array_map(
+            static fn(\Twig\TwigFilter $f): string => $f->getName(),
+            (new PromptSandbox())->guards()->getFilters(),
+        );
+
+        self::assertSame(['join'], $guarded);
+        self::assertSame(['join'], PromptSandbox::OBJECT_CASTING_FILTERS);
+        self::assertSame([], array_diff(PromptSandbox::OBJECT_CASTING_FILTERS, PromptSandbox::ALLOWED_FILTERS));
+    }
+
+    public function testAGuardedFilterGivesAnOverrideWhatItGivesAShippedPrompt(): void
+    {
+        // Text, numbers, arrays and iterators: the guard hands them to Twig's
+        // own filter, so both sides print the same bytes.
+        $body = "{{ ['a', 'b', 'c']|join }}|{{ ['a', 'b', 'c']|join(', ') }}|{{ ['a', 'b', 'c']|join(', ', ' and ') }}"
+            . "|{{ {'x': 1, 'y': 2.5}|join('-') }}|{{ []|join(',') }}|{{ ['only']|join(', ', ' and ') }}"
+            . "|{{ 'text'|join(',') }}|{{ 7|join }}|{{ none|join(',') }}|{{ true|join }}|{{ items|join('+') }}"
+            . "|{{ [1, null, 'z', false]|join('/') }}";
+        $variables = ['items' => new \ArrayIterator(['i', 'j'])];
+
+        $shipped = (new PromptRenderer())->render('p', $variables, $this->layered(['p' => $body], []));
+        $variables = ['items' => new \ArrayIterator(['i', 'j'])];
+        $override = (new PromptRenderer())->render('p', $variables, $this->layered(['p' => self::SHIPPED], ['p' => $body]));
+
+        self::assertSame('abc|a, b, c|a, b and c|1-2.5||only|text|7||1|i+j|1//z/', $shipped->system);
+        self::assertSame($shipped->system, $override->system);
     }
 
     public function testAShippedPromptStillSerialises(): void
