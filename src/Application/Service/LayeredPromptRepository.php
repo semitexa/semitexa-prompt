@@ -6,6 +6,7 @@ namespace Semitexa\Prompt\Application\Service;
 
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Attribute\SatisfiesRepositoryContract;
+use Semitexa\Core\Attribute\WorkerState;
 use Semitexa\Prompt\Domain\Contract\PromptOverrideProviderInterface;
 use Semitexa\Prompt\Domain\Contract\PromptRepositoryInterface;
 use Semitexa\Prompt\Domain\Exception\PromptNotFoundException;
@@ -33,6 +34,7 @@ final class LayeredPromptRepository implements PromptRepositoryInterface
     #[InjectAsReadonly]
     protected PromptOverrideProviderInterface $overrides;
 
+    #[WorkerState('Test seam set only by withCatalog(); production never calls it and lazily builds its own code catalog (PromptRegistry).')]
     private ?PromptRepositoryInterface $catalog = null;
 
     /** Test seam — production path uses property injection. */
